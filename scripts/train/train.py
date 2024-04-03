@@ -36,6 +36,9 @@ from llmfoundry.utils.config_utils import (log_config, pop_config,
                                            update_batch_size_info)
 from llmfoundry.utils.registry_utils import import_file
 
+from ziplm import *
+from timing import *
+
 log = logging.getLogger(__name__)
 
 
@@ -329,6 +332,10 @@ def main(cfg: DictConfig) -> Trainer:
                                          'log_config',
                                          must_exist=False,
                                          default_value=True)
+    timing_file: str = pop_config(cfg,
+                                    'timing_file',
+                                    must_exist=False,
+                                    default_value="")
 
     # Enable autoresume from model checkpoints if possible
     autoresume_default: bool = False
@@ -512,6 +519,12 @@ def main(cfg: DictConfig) -> Trainer:
         master_weights_dtype=model_config.get('master_weights_dtype', None),
     )
 
+    timing = False
+    if timing:
+        timing_main(model, "cuda", train_loader.dataloader, is_bert=False)
+        return
+    oneshot_prune(train_loader.dataloader, model, target=1.2, loader_batchsize=1, loader_nsamples=512, timings_file=timing_file)
+    return
     # Log number of parameters
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable_params = sum(

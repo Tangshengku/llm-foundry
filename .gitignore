@@ -156,3 +156,7 @@ notebooks/
 **/mlruns/*
 **/tokenizer-save-dir-*/**
 **/.downloaded_finetuning/
+*.db
+error*
+benchmark.sh
+
