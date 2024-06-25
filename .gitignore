@@ -159,4 +159,8 @@ notebooks/
 *.db
 error*
 benchmark.sh
-
+eval_results
+llama2-7b*/
+tokenizer-save*/
+llama3-8b*/
+profile*.txt

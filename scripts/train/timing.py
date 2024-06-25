@@ -45,7 +45,7 @@ def benchmark_foo(foo, repetitions=100, with_attn_cache=False, attn_cache_kwargs
 
 
 @torch.no_grad()
-def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn_cache=False, repetitions=50): # either BERT or GPT2
+def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn_cache=False, repetitions=100): # either BERT or GPT2
     # assume model and trainer are initialized from the main script
     model.to(device).type(torch.bfloat16)
     model.eval()
@@ -65,7 +65,7 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
         prunable = model.model.model.layers
         layer = model.model.model.layers[0]
 
-    db_downscale = 1000  # 1000 for normal, I think 100 for text-gen
+    db_downscale = 100  # 1000 for normal, I think 100 for text-gen
 
     # === cache inputs/outputs needed for timing ===
     cached_inputs_outputs = {}
@@ -100,6 +100,7 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
     print("base")
     t_mean, t_std = benchmark_foo(lambda: model(sample_inputs), repetitions=repetitions)
     print(f"{t_mean/db_downscale:.4f}")
+    return
 
     # === benchmark prunable parts ===
     print("prunable")
@@ -117,10 +118,10 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
     print(f"{t_mean/db_downscale:.4f}")
 
     # === lm-head gpt2 ===
-    if not is_bert:
-        print("lm_head")
-        t_mean, t_std = benchmark_foo(lambda: model.model.lm_head(*cached_inputs_outputs[prunable_dict_key + "_outputs"][0]), repetitions=repetitions)
-        print(f"{t_mean/db_downscale:.4f}")
+    # if not is_bert:
+    #     print("lm_head")
+    #     t_mean, t_std = benchmark_foo(lambda: model.model.lm_head(*cached_inputs_outputs[prunable_dict_key + "_outputs"][0]), repetitions=repetitions)
+    #     print(f"{t_mean/db_downscale:.4f}")
 
     # === benchmark attention layer ===
     num_heads = model.config.num_attention_heads if not is_bert else model.config.n_head
@@ -154,7 +155,7 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
     delta = .9
     sparsities = [1 - delta ** i for i in range(100) if delta ** i > .01]
     for sparsity in sparsities:
-        pruned_inter_dim = inter_size - round(inter_size * sparsity)
+        pruned_inter_dim = inter_size - round((inter_size * sparsity) / 32) * 32
         idx = torch.arange(pruned_inter_dim)
 
         if is_bert:

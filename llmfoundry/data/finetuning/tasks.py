@@ -73,7 +73,7 @@ log = logging.getLogger(__name__)
 __all__ = ['dataset_constructor']
 
 _ALLOWED_RESPONSE_KEYS = {'response', 'completion'}
-_ALLOWED_PROMPT_KEYS = {'prompt'}
+_ALLOWED_PROMPT_KEYS = {'prompt', 'question'}
 _ALLOWED_MESSAGES_KEYS = {'messages'}
 _ALLOWED_ROLE_KEYS = {'role'}
 _ALLOWED_CONTENT_KEYS = {'content'}

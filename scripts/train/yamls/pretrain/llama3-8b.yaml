@@ -1,30 +1,29 @@
 data_local: ./my-copy-c4
 data_remote:  # If blank, files must be present in data_local
 tokenizer_name: facebook/opt-2.7b
-max_seq_len: 2048
+max_seq_len: 4096
 global_seed: 17
 
 # Run Name
-run_name: finetune_with_OpenOrca  # If left blank, will be read from env var $RUN_NAME
-timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/LLama2-7b-A6000_flash.txt
+run_name:  # If left blank, will be read from env var $RUN_NAME
+timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/LLama3-8b-A6000.txt
 
 max_split_size_mb: 512
 # Model
 model:
   name: hf_causal_lm
-  pretrained_model_name_or_path: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
-  # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B Shengkun/LLama2-7B-Structural-Prune-2.5x princeton-nlp/Sheared-LLaMA-2.7B-Pruned
+  # pretrained_model_name_or_path: meta-llama/Meta-Llama-3-8B
+  pretrained_model_name_or_path: Shengkun/Llama3-8B-Structural-Pruning-1.5
+
   pretrained: true
-  # pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
   # init_device: meta
   use_auth_token: true
   use_flash_attention_2: true
 
 # Tokenizer
 tokenizer:
-  name: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
-  # name: princeton-nlp/Sheared-LLaMA-2.7B
-  # name: meta-llama/Llama-2-7b-hf
+  # name: meta-llama/Meta-Llama-3-8B
+  name: Shengkun/Llama3-8B-Structural-Pruning-1.5
   kwargs:
     model_max_length: ${max_seq_len}
 
@@ -33,7 +32,6 @@ train_loader:
   name: finetuning
   dataset:
     # local: ${data_local}
-    # hf_name: mosaicml/dolly_hhrlhf
     hf_name: Open-Orca/OpenOrca
     decoder_only_format: true
     remote: ${data_remote}
@@ -42,7 +40,7 @@ train_loader:
     max_seq_len: ${max_seq_len}
     shuffle_seed: ${global_seed}
   drop_last: true
-  num_workers: 64
+  num_workers: 8
 
 # eval_loader:
 #   name: finetuning
@@ -66,7 +64,7 @@ scheduler:
 
 optimizer:
   name: decoupled_adamw
-  lr: 1.0e-5
+  lr: 6.0e-4
   betas:
   - 0.9
   - 0.95
@@ -78,11 +76,11 @@ algorithms:
     clipping_type: norm
     clipping_threshold: 1.0
 
-max_duration: 80000ba  # ~ 0.4B tokens
-eval_interval: 3000ba
+max_duration: 4800ba  # ~ 2.5B tokens
+eval_interval: 500ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 64
+global_train_batch_size: 1
 
 # System
 seed: ${global_seed}
@@ -100,13 +98,6 @@ fsdp_config:
   activation_cpu_offload: false
   limit_all_gathers: true
 
-knowledge_distillation:
-  teacher_name_or_path: meta-llama/Llama-2-7b-hf
-  temperature: 0.0
-  hardness_kldiv: 0.0
-  hardness_ce: 1.0
-  hardness_squarehead: 1.0
-
 # Logging
 progress_bar: false
 log_to_console: true
@@ -123,9 +114,9 @@ callbacks:
 #   wandb: {}
 
 # Checkpoint to local filesystem or remote object store
-save_interval: 10000ba
+# save_interval: 500ba
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
-save_folder: ./{run_name}/checkpoints
+# save_folder: ./{run_name}/checkpoints
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints
 
 # Load from local filesystem or remote object store

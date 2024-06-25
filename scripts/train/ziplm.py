@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import Module
 from transformers.modeling_utils import prune_linear_layer
+from typing import List, Optional, Tuple, Union
 
 
 def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=''):
@@ -20,15 +21,16 @@ def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=''):
 class NoAttention(Module):
     def forward(
         self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_value=None,
-        output_attentions=False
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        **kwargs,
     ):
-        return (hidden_states,)
+        return (hidden_states, None, None)
 
 
 class NoIntermediate(Module):
@@ -37,12 +39,11 @@ class NoIntermediate(Module):
 
 
 class NoOutput(Module):
-    def forward(self, hidden_states, input_tensor):
-        return input_tensor
+    def forward(self, hidden_states):
+        return hidden_states
 
 
-def shrink(model):
-    # bert = model.bert
+def shrink(model, update_mask=False):
     for layer in model.model.model.layers:
         if not isinstance(layer.self_attn, NoAttention):
             weight = layer.self_attn.o_proj.weight
@@ -52,16 +53,31 @@ def shrink(model):
                 mask = torch.all(
                     weight.t().reshape((-1, weight.shape[0] * layer.self_attn.head_dim)) == 0, 1
                 )
-                idx = []
-                count = 0
-                for i in range(mask.numel()):
-                    while count in layer.self_attn.pruned_heads:
+                if update_mask:
+                    mask_ = (~mask.unsqueeze(1)) * torch.ones_like(weight.t(), device=mask.device).reshape(
+                            (-1, weight.shape[0] * layer.attn.head_size)) 
+                    mask_ = mask_.reshape(-1, weight.shape[0])
+                    # mask_ = torch.ones_like(mask_, device=mask_.device)
+                    # layer.self_attn.o_proj.mask = mask_.t()
+                    # layer.self_attn.in_proj_linear_q.mask = mask_
+                    # layer.self_attn.in_proj_linear_k.mask = mask_
+                    # layer.self_attn.in_proj_linear_v.mask = mask_
+
+                    layer.self_attn.o_proj.register_buffer("mask", mask_.t(), persistent=False)
+                    layer.self_attn.in_proj_linear_q.register_buffer("mask", mask_, persistent=False)
+                    layer.self_attn.in_proj_linear_k.register_buffer("mask", mask_, persistent=False)
+                    layer.self_attn.in_proj_linear_v.register_buffer("mask", mask_, persistent=False)
+                else:
+                    idx = []
+                    count = 0
+                    for i in range(mask.numel()):
+                        while count in layer.self_attn.pruned_heads:
+                            count += 1
+                        if mask[i]:
+                            idx.append(count)
                         count += 1
-                    if mask[i]:
-                        idx.append(count)
-                    count += 1
-                if torch.any(mask):
-                    layer.self_attn.prune_heads(idx)
+                    if torch.any(mask):
+                        layer.self_attn.prune_heads(idx)
         if not isinstance(layer.mlp.down_proj, NoOutput):
             weight = layer.mlp.down_proj.weight
             if torch.all(weight == 0):
@@ -70,8 +86,16 @@ def shrink(model):
                 layer.mlp.down_proj = NoOutput()
             else:
                 mask = torch.all(weight == 0, 0)
-                # print(weight.shape)
-                if torch.any(mask):
+                if update_mask:
+                    mask_ = (~mask.unsqueeze(0)) * torch.ones_like(weight, device=mask.device)
+                    # layer.mlp.down_proj.mask = mask_
+                    # layer.mlp.up_proj = mask_.t()
+                    # layer.mlp.gate_proj = mask_.t()
+                    
+                    layer.mlp.down_proj.register_buffer("mask", mask_, persistent=False)
+                    layer.mlp.up_proj.register_buffer("mask", mask_.t(), persistent=False)
+                    layer.mlp.gate_proj.register_buffer("mask", mask_.t(), persistent=False)
+                elif torch.any(mask):
                     idx = torch.nonzero(~mask).flatten()
                     layer.mlp.gate_proj = prune_linear_layer(layer.mlp.gate_proj, idx)
                     layer.mlp.up_proj = prune_linear_layer(layer.mlp.up_proj, idx)
@@ -112,7 +136,7 @@ class ZipLM:
         self.nsamples += tmp
         self.H += 2 / self.nsamples * (inp.matmul(inp.t())).double()
 
-    def invert(self, H, percentdamp=.01):
+    def invert(self, H, percentdamp=0.1):
         try:
             Hinv = torch.cholesky_inverse(torch.linalg.cholesky(H))
         except RuntimeError:
@@ -238,9 +262,12 @@ def gen_transformerdb(
 
     ziplm = {}
     for i, name in enumerate(layersp):
+        # if fcname not in name:
+        #     continue
+        # print(name)
         layer = layersp[name]
         if i < len(layersp)/2:
-            ziplm[name] = ZipLM(layer, device="cuda:4")
+            ziplm[name] = ZipLM(layer, device="cuda:2")
         else:
             ziplm[name] = ZipLM(layer, device="cuda:3")
 
@@ -281,11 +308,13 @@ def gen_transformerdb(
             else:
                 sparsities1 = sparsities
                 remaining = ziplm[name].layer.weight.shape[1]
-                pruned = [round((1 - s) * fcdim) for s in sparsities1]
+                pruned = [round((1 - s) * fcdim / 32) * 32 for s in sparsities1]
                 pruned = [remaining - p for p in pruned if p <= remaining]
                 sparsities1 = sparsities1[-len(pruned):]
             Ws = ziplm[name].prune_struct(pruned, size=size)
-            db[name] = {('%.4f' % s): w.cpu() for s, w in zip(sparsities1, Ws)}
+            db[name] = {('%.4f' % s): w.cpu().clone() for s, w in zip(sparsities1, Ws)}
+            Ws = None
+            torch.cuda.empty_cache()
         ziplm[name].free()
 
     torch.save(db, filename)
@@ -295,7 +324,7 @@ class StructuredSPDY:
         self,
         target,
         db, errors, baselinetime, prunabletime, timings,
-        get_model, run, dataloader,
+        model, run, dataloader,
         dpbuckets=10000,
     ):
         self.target = target
@@ -303,7 +332,7 @@ class StructuredSPDY:
         self.run = run
         self.dpbuckets = dpbuckets
 
-        self.modelp = get_model().to("cuda:1")
+        self.modelp = model.to("cuda:0")
         self.layersp = find_layers(self.modelp)
 
         self.batches = []
@@ -378,7 +407,7 @@ class StructuredSPDY:
         ]
 
     def stitch_model(self, solution):
-        model = copy.deepcopy(self.modelp.to("cpu")).to("cuda:3")
+        model = copy.deepcopy(self.modelp.to("cpu")).to("cuda:1")
         layers = find_layers(model)
         config = {
             self.layers[i]: self.sparsities[i][solution[i]] for i in range(len(self.layers))
@@ -489,10 +518,10 @@ class StructDatabase:
 
     def load(self, layers, name, config='0.0000', sd=None):
         if sd is not None:
-            layers[name].weight.data = sd[name + '.weight'].to(layers[name].weight.device)
+            layers[name].weight.data = sd[name + '.weight'].to(layers[name].weight.device).to(torch.bfloat16)
             # layers[name].bias.data = sd[name + '.bias']
             return
-        layers[name].weight.data = self.db[name][config].to(layers[name].weight.device)
+        layers[name].weight.data = self.db[name][config].to(layers[name].weight.device).to(torch.bfloat16)
         # layers[name].bias.data = self.biases[name]
         # if config == '1.0000':
             # layers[name].bias.data = torch.zeros_like(layers[name].bias.data)
@@ -549,7 +578,10 @@ class StructDatabase:
                 i += 1
         timings = {}
         for name in self.db:
+            # if "down_proj" not in name:
+            #     continue
             timings[name] = attention if ('attention' in name or 'attn' in name) else fc
+            # timings[name] = fc
         return baselinetime, prunabletime, timings
 
 
@@ -667,56 +699,70 @@ def _run_llama(model, batch, loss=False, retmoved=False):
 
 @torch.no_grad()
 def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str):
-    db_file = f'database_{target}.db'
+    db_file = f'database_20kcalib_32_size_llama_2_from1.5.db'
     # module.to("cuda")
     module.to(torch.bfloat16)
-    gen_transformerdb(
-        db_file,
-        _get_model(module),
-        _run_llama,
-        _dataloader_builder(
-            dataloader,
-            batchsize=loader_batchsize,
-            nsamples=loader_nsamples,
-        ),
-        headcount=module.config.num_attention_heads,
-        headsize=module.config.hidden_size // module.config.num_attention_heads,
-        fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
-        attname='self_attn.o_proj',
-        fcname='mlp.down_proj')
+    # gen_transformerdb(
+    #     db_file,
+    #     _get_model(module),
+    #     _run_llama,
+    #     _dataloader_builder(
+    #         dataloader,
+    #         batchsize=loader_batchsize,
+    #         nsamples=loader_nsamples,
+    #     ),
+    #     headcount=module.config.num_attention_heads,
+    #     headsize=module.config.hidden_size // module.config.num_attention_heads,
+    #     fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
+    #     attname='self_attn.o_proj',
+    #     fcname='mlp.down_proj')
+    # return
 
     model = _get_model(module)()
     db = StructDatabase(db_file, model)
 
-    error_file = f'errors_squared_{target}.txt'
-    compute_squared(
-        db,
-        _get_model(module),
-        _dataloader_builder(
-            dataloader,
-            batchsize=loader_batchsize,
-            nsamples=loader_nsamples,
-        ),
-        _run_llama,
-        error_file
-    )
-    torch.cuda.empty_cache()
+    error_file = f'errors_squared_20kcali_32_size_llama_2_from_1.5.txt'
+    # compute_squared(
+    #     db,
+    #     _get_model(module),
+    #     _dataloader_builder(
+    #         dataloader,
+    #         batchsize=loader_batchsize,
+    #         nsamples=128,
+    #     ),
+    #     _run_llama,
+    #     error_file
+    # )
+    # torch.cuda.empty_cache()
+    # return
 
     errors = db.load_errors(error_file)
     baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
 
     struct_spdy = StructuredSPDY(
         target, db, errors, baselinetime, prunabletime, timings,
-        _get_model(module), _run_llama,
+        module, _run_llama,
         _dataloader_builder(
             dataloader,
-            batchsize=loader_batchsize,
-            nsamples=loader_nsamples,
+            batchsize=1,
+            nsamples=20,
         ),
     )
 
-    profile = f'profile_{target}.txt'
+    profile = f'profile_{target}_32_20kcali_size_llama2.txt'
     struct_spdy.search(profile)
     db.load_file(module, profile)
-    shrink(module)
+    # shrink(module)
     # os.remove(db_file)
+
+@torch.no_grad()
+def load_pruned_model(module, target):
+    db_file = f'database_20kcalib_32_size_llama_2_from1.5.db'
+    
+    profile = f'profile_2_32_20kcali_size_llama2.txt'
+
+    model = _get_model(module)()
+    db = StructDatabase(db_file, model)
+    
+    db.load_file(module, profile)
+    # shrink(module, update_mask=False)

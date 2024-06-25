@@ -35,12 +35,17 @@ from llmfoundry.utils.config_utils import (log_config, pop_config,
                                            process_init_device,
                                            update_batch_size_info)
 from llmfoundry.utils.registry_utils import import_file
+from llmfoundry.algorithms import KnowledgeDistillation
 
 from ziplm import *
 from timing import *
 
 log = logging.getLogger(__name__)
 
+def get_parameter_number(model):
+    total_num = sum(p.numel() for p in model.parameters())
+    trainable_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {'Total': total_num, 'Trainable': trainable_num}
 
 def validate_config(cfg: DictConfig):
     """Validates compatible model and dataloader selection."""
@@ -518,14 +523,43 @@ def main(cfg: DictConfig) -> Trainer:
         init_context=init_context,
         master_weights_dtype=model_config.get('master_weights_dtype', None),
     )
-
+    if "knowledge_distillation" in cfg and cfg.knowledge_distillation.teacher_name_or_path is not None:
+        print(f"[Debug: Knowledge Distillation] config = {cfg.knowledge_distillation}")
+        teacher_config = copy.deepcopy(model_config)
+        teacher_config['pretrained_model_name_or_path'] = cfg.knowledge_distillation.teacher_name_or_path
+        teacher = build_composer_model(
+            name=teacher_config.name, cfg=teacher_config, tokenizer=tokenizer,
+            init_context=init_context,
+            master_weights_dtype=teacher_config.get('master_weights_dtype', None),)
+        teacher.eval()
+    
+    print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
+    shrink(model=model)
+    print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+    # print(get_parameter_number(model))
+    state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5/model.pt")
+    torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+        state, prefix='model.')
+    model.model.load_state_dict(state)
+    shrink(model=model)
+    print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
     timing = False
     if timing:
         timing_main(model, "cuda", train_loader.dataloader, is_bert=False)
         return
-    oneshot_prune(train_loader.dataloader, model, target=1.2, loader_batchsize=1, loader_nsamples=512, timings_file=timing_file)
-    return
+    # load_pruned_model(model, 2.25)
+    # print(get_parameter_number(model))
+    # oneshot_prune(train_loader.dataloader, model, target=2, loader_batchsize=1, loader_nsamples=20000, timings_file=timing_file)
+    # torch.save(model.state_dict(), "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5/model.pt")
+    # print(get_parameter_number(model))
+    # model.tokenizer.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib")
+    # model.model.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib")
+    # model.tokenizer.push_to_hub("Shengkun/Llama3-8B-Structural-Pruning-1.5")
+    # model.model.push_to_hub("Shengkun/Llama3-8B-Structural-Pruning-1.5")
+    # oneshot_prune(train_loader.dataloader, model, target=1.25, loader_batchsize=1, loader_nsamples=2048, timings_file=timing_file)
+    # return
     # Log number of parameters
+    # return
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable_params = sum(
         p.numel() for p in model.parameters() if p.requires_grad)
@@ -552,6 +586,17 @@ def main(cfg: DictConfig) -> Trainer:
         if mosaicml_logger is not None:
             mosaicml_logger.log_exception(e)
         raise e
+    
+    if "knowledge_distillation" in cfg and cfg.knowledge_distillation.teacher_name_or_path is not None:
+        # assume algorithm is not None because we will always have `mask_pruned_weights`
+        algorithms.append(KnowledgeDistillation(
+            teacher,
+            cfg.knowledge_distillation.temperature,
+            cfg.knowledge_distillation.hardness_ce,
+            cfg.knowledge_distillation.hardness_kldiv,
+            cfg.knowledge_distillation.hardness_squarehead
+            )
+        )
 
     # Build the Trainer
     log.info('Building trainer...')
