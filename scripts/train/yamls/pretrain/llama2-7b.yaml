@@ -5,14 +5,19 @@ max_seq_len: 2048
 global_seed: 17
 
 # Run Name
-run_name: finetune_with_OpenOrca  # If left blank, will be read from env var $RUN_NAME
+run_name: finetune_with_fine_edu  # If left blank, will be read from env var $RUN_NAME
 timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/LLama2-7b-A6000_flash.txt
 
 max_split_size_mb: 512
 # Model
 model:
   name: hf_causal_lm
+  # Pruned Model of Shearedllama without Finetuning
+  # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
+  
+  # Zipllm 1.5x model with FineTuning
   pretrained_model_name_or_path: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
+  
   # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B Shengkun/LLama2-7B-Structural-Prune-2.5x princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   pretrained: true
   # pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
@@ -23,26 +28,39 @@ model:
 # Tokenizer
 tokenizer:
   name: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
-  # name: princeton-nlp/Sheared-LLaMA-2.7B
+  # name: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   # name: meta-llama/Llama-2-7b-hf
   kwargs:
     model_max_length: ${max_seq_len}
 
 # Dataloaders
 train_loader:
-  name: finetuning
+  name: text
   dataset:
     # local: ${data_local}
     # hf_name: mosaicml/dolly_hhrlhf
-    hf_name: Open-Orca/OpenOrca
-    decoder_only_format: true
-    remote: ${data_remote}
+    # hf_name: Open-Orca/OpenOrca
+    streams:
+      finewebedu10bt:
+        local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finewebedu/sample-10BT
+        split: train
+      # open_orca:
+      #   remote: 
+      #   local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/open_orca
+      #   split: train
+    # hf_name: HuggingFaceFW/fineweb-edu
+    # decoder_only_format: true
+    # remote: HuggingFaceFW/fineweb-edu
     split: train
+    # subset: sample-10BT
     shuffle: true
     max_seq_len: ${max_seq_len}
     shuffle_seed: ${global_seed}
+    # hf_kwargs:
+    #   name: sample-10BT
+      # streaming: true
   drop_last: true
-  num_workers: 64
+  num_workers: 12
 
 # eval_loader:
 #   name: finetuning
@@ -66,7 +84,7 @@ scheduler:
 
 optimizer:
   name: decoupled_adamw
-  lr: 1.0e-5
+  lr: 1.0e-4
   betas:
   - 0.9
   - 0.95
@@ -78,11 +96,12 @@ algorithms:
     clipping_type: norm
     clipping_threshold: 1.0
 
-max_duration: 80000ba  # ~ 0.4B tokens
-eval_interval: 3000ba
+max_duration: 20000ba  # ~ 0.4B tokens
+eval_interval: 5000ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 64
+global_train_batch_size: 512 # for clusters
+# global_train_batch_size: 48 # for local devices
 
 # System
 seed: ${global_seed}
@@ -90,6 +109,7 @@ device_eval_batch_size: 16
 device_train_microbatch_size: 64
 # device_train_microbatch_size: auto
 precision: amp_bf16
+# precision: fp16
 
 # FSDP
 fsdp_config:
@@ -100,12 +120,12 @@ fsdp_config:
   activation_cpu_offload: false
   limit_all_gathers: true
 
-knowledge_distillation:
-  teacher_name_or_path: meta-llama/Llama-2-7b-hf
-  temperature: 0.0
-  hardness_kldiv: 0.0
-  hardness_ce: 1.0
-  hardness_squarehead: 1.0
+# knowledge_distillation:
+#   teacher_name_or_path: meta-llama/Llama-2-7b-hf
+#   temperature: 0.0
+#   hardness_kldiv: 0.0
+#   hardness_ce: 1.0
+#   hardness_squarehead: 1.0
 
 # Logging
 progress_bar: false
@@ -123,7 +143,7 @@ callbacks:
 #   wandb: {}
 
 # Checkpoint to local filesystem or remote object store
-save_interval: 10000ba
+save_interval: 4000ba
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
 save_folder: ./{run_name}/checkpoints
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints

@@ -136,7 +136,7 @@ class ZipLM:
         self.nsamples += tmp
         self.H += 2 / self.nsamples * (inp.matmul(inp.t())).double()
 
-    def invert(self, H, percentdamp=0.1):
+    def invert(self, H, percentdamp=.01):
         try:
             Hinv = torch.cholesky_inverse(torch.linalg.cholesky(H))
         except RuntimeError:
@@ -420,7 +420,10 @@ class StructuredSPDY:
     def get_loss(self, model):
         loss = 0
         for batch in self.batches:
-            batch = batch.to(model.model.device)
+            for k, v in batch.items():
+                batch[k] = v.to(model.model.device)
+            # For OpenOrca
+            # batch = batch.to(model.model.device)
             loss += self.run(model, batch, loss=True)
         return loss / len(self.batches)
 
@@ -468,7 +471,7 @@ class StructuredSPDY:
             self.save_profile(coefs, save)
 
     def search(
-        self, save='', randinits=100, searchsteps=1000, muteprob=.1
+        self, save='', randinits=100, searchsteps=500, muteprob=.1
     ):
         print('Random inits ...')
         candidates = []
@@ -518,10 +521,12 @@ class StructDatabase:
 
     def load(self, layers, name, config='0.0000', sd=None):
         if sd is not None:
-            layers[name].weight.data = sd[name + '.weight'].to(layers[name].weight.device).to(torch.bfloat16)
+            layers[name].weight.data = sd[name + '.weight'].to(layers[name].weight.device)
+            # layers[name].weight.data = sd[name + '.weight'].to(layers[name].weight.device).to(torch.bfloat16)
             # layers[name].bias.data = sd[name + '.bias']
             return
-        layers[name].weight.data = self.db[name][config].to(layers[name].weight.device).to(torch.bfloat16)
+        layers[name].weight.data = self.db[name][config].to(layers[name].weight.device)
+        # layers[name].weight.data = self.db[name][config].to(layers[name].weight.device).to(torch.bfloat16)
         # layers[name].bias.data = self.biases[name]
         # if config == '1.0000':
             # layers[name].bias.data = torch.zeros_like(layers[name].bias.data)
@@ -698,43 +703,41 @@ def _run_llama(model, batch, loss=False, retmoved=False):
     # return torch.cat([out[key] for key in ['start_logits', 'end_logits']])
 
 @torch.no_grad()
-def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str):
-    db_file = f'database_20kcalib_32_size_llama_2_from1.5.db'
+def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str, run_name: str):
+    db_file = f'database_{run_name}.db'
     # module.to("cuda")
-    module.to(torch.bfloat16)
-    # gen_transformerdb(
-    #     db_file,
-    #     _get_model(module),
-    #     _run_llama,
-    #     _dataloader_builder(
-    #         dataloader,
-    #         batchsize=loader_batchsize,
-    #         nsamples=loader_nsamples,
-    #     ),
-    #     headcount=module.config.num_attention_heads,
-    #     headsize=module.config.hidden_size // module.config.num_attention_heads,
-    #     fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
-    #     attname='self_attn.o_proj',
-    #     fcname='mlp.down_proj')
-    # return
+    # module.to(torch.bfloat16)
+    gen_transformerdb(
+        db_file,
+        _get_model(module),
+        _run_llama,
+        _dataloader_builder(
+            dataloader,
+            batchsize=loader_batchsize,
+            nsamples=loader_nsamples,
+        ),
+        headcount=module.config.num_attention_heads,
+        headsize=module.config.hidden_size // module.config.num_attention_heads,
+        fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
+        attname='self_attn.o_proj',
+        fcname='mlp.down_proj')
 
     model = _get_model(module)()
     db = StructDatabase(db_file, model)
 
-    error_file = f'errors_squared_20kcali_32_size_llama_2_from_1.5.txt'
-    # compute_squared(
-    #     db,
-    #     _get_model(module),
-    #     _dataloader_builder(
-    #         dataloader,
-    #         batchsize=loader_batchsize,
-    #         nsamples=128,
-    #     ),
-    #     _run_llama,
-    #     error_file
-    # )
-    # torch.cuda.empty_cache()
-    # return
+    error_file = f'errors_squared_{run_name}.txt'
+    compute_squared(
+        db,
+        _get_model(module),
+        _dataloader_builder(
+            dataloader,
+            batchsize=loader_batchsize,
+            nsamples=1024, # Please adjust this number for efficiency
+        ),
+        _run_llama,
+        error_file
+    )
+    torch.cuda.empty_cache()
 
     errors = db.load_errors(error_file)
     baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
@@ -744,14 +747,15 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
         module, _run_llama,
         _dataloader_builder(
             dataloader,
-            batchsize=1,
-            nsamples=20,
+            batchsize=loader_batchsize,
+            nsamples=256, # Please adjust this number for efficiency
         ),
     )
 
-    profile = f'profile_{target}_32_20kcali_size_llama2.txt'
+    profile = f'profile_{target}_{run_name}.txt'
     struct_spdy.search(profile)
     db.load_file(module, profile)
+    # For flexibility, the weights are saved as full matrix, please do shrinking when you need.
     # shrink(module)
     # os.remove(db_file)
 

@@ -341,6 +341,18 @@ def main(cfg: DictConfig) -> Trainer:
                                     'timing_file',
                                     must_exist=False,
                                     default_value="")
+    target: float = pop_config(cfg,
+                                'target',
+                                must_exist=False,
+                                default_value=1.5)
+    calibration_data_size: int = pop_config(cfg,
+                                'calibration_data_size',
+                                must_exist=False,
+                                default_value=2048)
+    is_prune: bool = pop_config(cfg,
+                                'is_prune',
+                                must_exist=False,
+                                default_value=False)
 
     # Enable autoresume from model checkpoints if possible
     autoresume_default: bool = False
@@ -397,6 +409,8 @@ def main(cfg: DictConfig) -> Trainer:
     init_context = process_init_device(model_config, fsdp_config)
     logged_cfg.update({'fsdp_config': fsdp_config}, merge=True)
 
+    from streaming.base.util import clean_stale_shared_memory
+    clean_stale_shared_memory()
     # Build tokenizer
     log.info('Building tokenizer...')
     tokenizer_name = tokenizer_config['name']
@@ -536,30 +550,45 @@ def main(cfg: DictConfig) -> Trainer:
     print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
     shrink(model=model)
     print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
-    # print(get_parameter_number(model))
-    state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5/model.pt")
-    torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
-        state, prefix='model.')
-    model.model.load_state_dict(state)
-    shrink(model=model)
-    print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
-    timing = False
-    if timing:
-        timing_main(model, "cuda", train_loader.dataloader, is_bert=False)
-        return
-    # load_pruned_model(model, 2.25)
-    # print(get_parameter_number(model))
-    # oneshot_prune(train_loader.dataloader, model, target=2, loader_batchsize=1, loader_nsamples=20000, timings_file=timing_file)
-    # torch.save(model.state_dict(), "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5/model.pt")
-    # print(get_parameter_number(model))
+    
+    # Push the Finetuned Weight to Huggingface
+    # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/llama2-7b-20kcali-1.5x-finetune-30000batch_lr_1e-4_4096_fineweb/ep1-ba30000-rank0.pt")
+    # model.load_state_dict(state["state"]["model"])
+    # print("Finetuned model is loaded, Ready to prune")
+    # model.tokenizer.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib-Fineweb-Finetuned")
+    # model.model.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib-Fineweb-Finetuned")
+
+    # Some pushing codes, please just ignore
     # model.tokenizer.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib")
     # model.model.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib")
     # model.tokenizer.push_to_hub("Shengkun/Llama3-8B-Structural-Pruning-1.5")
     # model.model.push_to_hub("Shengkun/Llama3-8B-Structural-Pruning-1.5")
-    # oneshot_prune(train_loader.dataloader, model, target=1.25, loader_batchsize=1, loader_nsamples=2048, timings_file=timing_file)
-    # return
-    # Log number of parameters
-    # return
+
+    timing = False
+    if timing:
+        timing_main(model, "cuda", train_loader.dataloader, is_bert=False)
+        return
+
+    if is_prune:
+        oneshot_prune(train_loader.dataloader, model, target=target, loader_batchsize=1, \
+                      loader_nsamples=calibration_data_size, timings_file=timing_file, \
+                        run_name=run_name)
+        # For gradual pruning, the weight might not be pushed to huggingface directly
+        # So, a compromised solution is to save the pruned weights locally
+        # Please uncomment this if you want to save the weight locally
+        torch.save(model.state_dict(), \
+                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/2kcali_gradual_from_1.5_fineweb/model.pt")
+        return
+    # else:
+        # Load the weight of pruned model
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5_fineweb/model.pt")
+        # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+        #     state, prefix='model.')
+        # model.model.load_state_dict(state)
+        # shrink(model=model)
+        # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+
+
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable_params = sum(
         p.numel() for p in model.parameters() if p.requires_grad)

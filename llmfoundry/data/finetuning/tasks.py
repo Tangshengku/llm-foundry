@@ -72,9 +72,9 @@ log = logging.getLogger(__name__)
 
 __all__ = ['dataset_constructor']
 
-_ALLOWED_RESPONSE_KEYS = {'response', 'completion'}
+_ALLOWED_RESPONSE_KEYS = {'response', 'completion', 'text'}
 _ALLOWED_PROMPT_KEYS = {'prompt', 'question'}
-_ALLOWED_MESSAGES_KEYS = {'messages'}
+_ALLOWED_MESSAGES_KEYS = {'messages', 'text'}
 _ALLOWED_ROLE_KEYS = {'role'}
 _ALLOWED_CONTENT_KEYS = {'content'}
 _ALLOWED_ROLES = {'user', 'assistant', 'system'}
@@ -857,6 +857,16 @@ def alpaca_preprocessing_function(inp: Dict) -> Dict[str, str]:
 
     return {'prompt': prompt, 'response': response}
 
+@dataset_constructor.register('HuggingFaceFW/fineweb-edu')
+def webedu_preprocessing_function(inp: Dict) -> Dict[str, str]:
+    """Split out prompt/response from text."""
+    try:
+        prompt = ""
+        response = inp['text']
+    except Exception as e:
+        raise UnableToProcessPromptResponseError(inp) from e
+
+    return {'prompt': prompt, 'response': response}
 
 @dataset_constructor.register('HuggingFaceH4/databricks_dolly_15k')
 def dolly_preprocessing_function(inp: Dict) -> Dict[str, str]:
