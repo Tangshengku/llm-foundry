@@ -50,7 +50,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 yaml_file=./scripts/train/yamls/pretrain/llama2-7b.yaml
 # save_folder=./srun_logs/llama2-7b-20kcali-1.5x-finetune-webedu_lr_1e4_batch1024_4096_1000ba_test
-save_folder=./srun_logs/shearedllama_pruned_2.7B_fineweb
+save_folder=./srun_logs/zipllm_from_1.5_openorca_2x_20B_finetune_kd
 
 source /nfs/scistore19/alistgrp/stang/miniconda3/bin/activate llama
 

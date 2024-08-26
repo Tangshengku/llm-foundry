@@ -537,6 +537,8 @@ def main(cfg: DictConfig) -> Trainer:
         init_context=init_context,
         master_weights_dtype=model_config.get('master_weights_dtype', None),
     )
+
+
     if "knowledge_distillation" in cfg and cfg.knowledge_distillation.teacher_name_or_path is not None:
         print(f"[Debug: Knowledge Distillation] config = {cfg.knowledge_distillation}")
         teacher_config = copy.deepcopy(model_config)
@@ -550,7 +552,12 @@ def main(cfg: DictConfig) -> Trainer:
     print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
     shrink(model=model)
     print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
-    
+    # load_pruned_model(module=model, 
+    #                   db_file="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database_prune_with_fine_edu_20kcali_2x.db",
+    #                   profile="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/profile_2.0_prune_with_fine_edu_20kcali_2x_4_layers.txt")
+    # torch.save(model.state_dict(), \
+    #                "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/2k_fineweb_oneshot_4layers/model.pt")
+    # return
     # Push the Finetuned Weight to Huggingface
     # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/llama2-7b-20kcali-1.5x-finetune-30000batch_lr_1e-4_4096_fineweb/ep1-ba30000-rank0.pt")
     # model.load_state_dict(state["state"]["model"])
@@ -577,17 +584,16 @@ def main(cfg: DictConfig) -> Trainer:
         # So, a compromised solution is to save the pruned weights locally
         # Please uncomment this if you want to save the weight locally
         torch.save(model.state_dict(), \
-                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/2kcali_gradual_from_1.5_fineweb/model.pt")
+                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20k_Fineweb_2x_kl_div/model.pt")
         return
-    # else:
-        # Load the weight of pruned model
-        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5_fineweb/model.pt")
-        # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
-        #     state, prefix='model.')
-        # model.model.load_state_dict(state)
-        # shrink(model=model)
-        # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
-
+    
+    # Load the weight of pruned model
+    state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5/model.pt")
+    torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+        state, prefix='model.')
+    model.model.load_state_dict(state)
+    shrink(model=model)
+    print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
 
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable_params = sum(

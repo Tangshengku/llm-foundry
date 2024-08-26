@@ -16,20 +16,20 @@ model:
   # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   
   # Zipllm 1.5x model with FineTuning
-  pretrained_model_name_or_path: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
+  # pretrained_model_name_or_path: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
   
   # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B Shengkun/LLama2-7B-Structural-Prune-2.5x princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   pretrained: true
-  # pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
+  pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
   # init_device: meta
   use_auth_token: true
   use_flash_attention_2: true
 
 # Tokenizer
 tokenizer:
-  name: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
+  # name: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
   # name: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
-  # name: meta-llama/Llama-2-7b-hf
+  name: meta-llama/Llama-2-7b-hf
   kwargs:
     model_max_length: ${max_seq_len}
 
@@ -96,11 +96,11 @@ algorithms:
     clipping_type: norm
     clipping_threshold: 1.0
 
-max_duration: 20000ba  # ~ 0.4B tokens
+max_duration: 40000ba  # ~ 0.4B tokens
 eval_interval: 5000ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 512 # for clusters
+global_train_batch_size: 256 # for clusters
 # global_train_batch_size: 48 # for local devices
 
 # System
@@ -143,7 +143,7 @@ callbacks:
 #   wandb: {}
 
 # Checkpoint to local filesystem or remote object store
-save_interval: 4000ba
+save_interval: 5000ba
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
 save_folder: ./{run_name}/checkpoints
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints

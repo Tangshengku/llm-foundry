@@ -760,10 +760,10 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     # os.remove(db_file)
 
 @torch.no_grad()
-def load_pruned_model(module, target):
-    db_file = f'database_20kcalib_32_size_llama_2_from1.5.db'
+def load_pruned_model(module, db_file, profile):
+    # db_file = f'database_20kcalib_32_size_llama_2_from1.5.db'
     
-    profile = f'profile_2_32_20kcali_size_llama2.txt'
+    # profile = f'profile_2_32_20kcali_size_llama2.txt'
 
     model = _get_model(module)()
     db = StructDatabase(db_file, model)
