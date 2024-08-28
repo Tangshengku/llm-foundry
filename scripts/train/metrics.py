@@ -14,8 +14,8 @@ def compute_perplexity(model, data):
     # Loop through each batch
     for inputs in data:
         # j = min(i + batch_size, num_samples)
-        # for k, v in inputs.items():
-        #     inputs[k] = v.to(device)
+        for k, v in inputs.items():
+            inputs[k] = v.to(device)
         # Forward pass through the model
         lm_logits = model(inputs).logits
         # Shift logits and labels for next token prediction

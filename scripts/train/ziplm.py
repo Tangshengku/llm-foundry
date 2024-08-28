@@ -504,8 +504,11 @@ class StructuredSPDY:
             self.save_profile(coefs, save)
 
 class StructuredEvoSearch:
-    def __init__(self, db) -> None:
+    def __init__(self, db, calibration_dataloader) -> None:
         self.db = db
+        self.data = []
+        for inputs in calibration_dataloader:
+            self.data.append(inputs)
     def generate_offspring(self, parent, layer_names, offspring_num, 
                            max_level=10, max_total_deviation=9999):
         
@@ -571,10 +574,10 @@ class StructuredEvoSearch:
 
                     if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
                         break
-                offspring[attn_decr_id] -= 1
-                offspring[attn_incr_id] += 1
-                offspring[mlp_decr_id] -= 1
-                offspring[mlp_incr_id] += 1
+                offspring[attn_decr_id*2] -= 1
+                offspring[attn_incr_id*2] += 1
+                offspring[mlp_decr_id*2 + 1] -= 1
+                offspring[mlp_incr_id*2 + 1] += 1
             # avoid duplicates
             if offspring in offspring_list:
                 print("Duplicate offsprings")
@@ -598,12 +601,12 @@ class StructuredEvoSearch:
             # return compute_kl_div(model, data, target_logits)
             return NotImplementedError
 
-    def selection(self, model, parent, offspring_list, calibration_dataloader,
-                  layer_names, survivors_per_selection=[1], fitness_fn="ppl",
+    def selection(self, model, parent, offspring_list,
+                  layer_names, survivors_per_selection=[8, 2, 1], samples_per_selection=[1, 2, 8], fitness_fn="ppl",
                     add_parent_to_last_selection=True):
-        device = next(model.parameters()).device
+        
         self.db.load_level_layers(model, layer_names, parent)
-        for num_survive in survivors_per_selection:
+        for num_survive, num_sample in zip(survivors_per_selection, samples_per_selection):
             # If specified, add parent to last_selection if not present
             if add_parent_to_last_selection:
                 if parent not in offspring_list:
@@ -614,11 +617,15 @@ class StructuredEvoSearch:
             #     target_logits_minibatch = [target_logits[i] for i in minibatch_ids]
             fitnesses = []
 
-            data = []
-            for inputs in calibration_dataloader:
-                for k, v in inputs.items():
-                    inputs[k] = v.to(device)
-                data.append(inputs)
+            # data = []
+            # for inputs in calibration_dataloader:
+            #     for k, v in inputs.items():
+            #         inputs[k] = v.to(device)
+            #     data.append(inputs)
+
+            # data_idx = random.sample(range(len(self.data)), num_sample)
+            # data = [self.data[idx] for idx in data_idx]
+            data = self.data[:num_sample]
             for i, candidate in enumerate(offspring_list):
                 self.db.load_level_layers(model, layer_names, candidate)
                 fitness = self.compute_fitness(model, data, fitness_fn, target_logits_minibatch)
@@ -627,7 +634,7 @@ class StructuredEvoSearch:
             # Keep only best
             best_ids = np.argsort(fitnesses)[:num_survive]
             offspring_list, train_fitnesses = [offspring_list[i] for i in best_ids], [fitnesses[i] for i in best_ids]
-        # In the end we have lists with single element
+            # In the end we have lists with single element
         train_fitness = train_fitnesses[0]
         parent = offspring_list[0]
         return parent, train_fitness
@@ -661,7 +668,7 @@ class StructDatabase:
             layers[name].weight.data = self.db[name][config].to(layers[name].weight.device)
         else:
             layer = layers.get_submodule(name)
-            layer.weight.data = self.db[name][config].to(layer.weight.device)
+            layer.weight.data = self.db[name][config].to(layer.weight.dtype).to(layer.weight.device)
         # layers[name].weight.data = self.db[name][config].to(layers[name].weight.device).to(torch.bfloat16)
         # layers[name].bias.data = self.biases[name]
         # if config == '1.0000':
@@ -851,7 +858,7 @@ def _run_llama(model, batch, loss=False, retmoved=False):
 def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str, run_name: str):
     db_file = f'database_{run_name}.db'
     # module.to("cuda:2")
-    # module.to(torch.bfloat16)
+    module.to(torch.bfloat16)
     # gen_transformerdb(
     #     db_file,
     #     _get_model(module),
@@ -886,7 +893,7 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
 
     # errors = db.load_errors(error_file)
     baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
-    # module.to("cuda:2")
+    module.to("cuda:2")
     # print(f"attn level2sparsity dict: {db.level2attn_sparsity}")
     # print(f"mlp level2sparsity dict: {db.level2mlp_sparsity}")
     layer_names = []
@@ -894,25 +901,25 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
         layer_names.append(name)
         print(name)
     parent = [5 for _ in layer_names]
-    struct_evo_search = StructuredEvoSearch(db=db)
+    struct_evo_search = StructuredEvoSearch(db=db, 
+                                            calibration_dataloader=_dataloader_builder(
+                                            dataloader,
+                                            batchsize=1,
+                                            nsamples=64, # Please adjust this number for efficiency
+                                        ),)
 
-    generation_number = 20
+    generation_number = 500
     for generation in range(generation_number):
         print(f"Generation {generation + 1}/{generation_number}")
         print("Start to generate offspring.")
         offspring_list = struct_evo_search.generate_offspring(
-            parent=parent, layer_names=layer_names, offspring_num=64)
+            parent=parent, layer_names=layer_names, offspring_num=16)
         print("Offspring generation is over. Ready to select.")
 
         parent, train_fitness = struct_evo_search.selection(
             model=module,
             parent=parent,
             offspring_list=offspring_list, 
-            calibration_dataloader=_dataloader_builder(
-            dataloader,
-            batchsize=loader_batchsize,
-            nsamples=8, # Please adjust this number for efficiency
-        ),
         layer_names=layer_names)
         print(f"Selection of generation {generation + 1} is over.")
         print(f"Best fitness value of generation {generation + 1} is {train_fitness}")
