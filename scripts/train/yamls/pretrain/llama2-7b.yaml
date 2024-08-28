@@ -6,7 +6,7 @@ global_seed: 17
 
 # Run Name
 run_name: finetune_with_fine_edu  # If left blank, will be read from env var $RUN_NAME
-timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/LLama2-7b-A6000_flash.txt
+timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/LLama2-7b-A6000_flash_level.txt
 
 max_split_size_mb: 512
 # Model

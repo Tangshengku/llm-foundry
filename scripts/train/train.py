@@ -584,7 +584,7 @@ def main(cfg: DictConfig) -> Trainer:
         # So, a compromised solution is to save the pruned weights locally
         # Please uncomment this if you want to save the weight locally
         torch.save(model.state_dict(), \
-                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20k_Fineweb_2x_kl_div/model.pt")
+                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search/model.pt")
         return
     
     # Load the weight of pruned model

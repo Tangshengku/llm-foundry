@@ -8,6 +8,8 @@ from torch.nn import Module
 from transformers.modeling_utils import prune_linear_layer
 from typing import List, Optional, Tuple, Union
 
+from metrics import compute_perplexity
+
 
 def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=''):
     if type(module) in layers:
@@ -501,10 +503,140 @@ class StructuredSPDY:
         if save:
             self.save_profile(coefs, save)
 
+class StructuredEvoSearch:
+    def __init__(self, db) -> None:
+        self.db = db
+    def generate_offspring(self, parent, layer_names, offspring_num, 
+                           max_level=10, max_total_deviation=9999):
+        
+        print(f"Parent: {parent}")
+
+        offspring_list = []
+        offspring_list.append(parent)  # Elitist EA
+
+        while len(offspring_list) < offspring_num:
+            print(f"Start to generate {len(offspring_list)} offspring.")
+            offspring = copy.deepcopy(parent)
+            # mutate offspring
+            num_flips = min(random.randint(1, 5), random.randint(1, 5))  # bias towards lower values
+            for _ in range(num_flips):
+                # positions where sparsity of attn can be decreased
+                while True:
+                    attn_decr_id = random.randint(0, len(offspring)/2 - 1)
+                    layer_name = layer_names[attn_decr_id*2]
+                    level = offspring[attn_decr_id*2]
+                    if level - 1 < 0:
+                        continue
+                    # print(f"Try to reduce {layer_name} to level {level - 1}....")
+                    # print(f"The sparsity is {self.db.level2attn_sparsity[str(level - 1)]}.")
+                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+                    if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                        break 
+                # positions where sparsity of mlp can be decreased
+                while True:
+                    mlp_decr_id = random.randint(0, len(offspring)/2 - 1)
+                    layer_name = layer_names[mlp_decr_id*2 + 1]
+                    level = offspring[mlp_decr_id*2 + 1]
+                    if level - 1 < 0:
+                        continue
+                    # print(f"Try to reduce {layer_name} to level {level - 1}....")
+                    # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level - 1)]}.")
+                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+
+                    if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                        break 
+                # positions where sparsity of attn can be increased
+                while True:
+                    attn_incr_id = random.randint(0, len(offspring)/2 - 1)
+                    layer_name = layer_names[attn_incr_id*2]
+                    level = offspring[attn_incr_id*2]
+                    if level + 1 > max_level:
+                        continue
+                    # print(f"Try to increase {layer_name} to level {level + 1}....")
+                    # print(f"The sparsity is {self.db.level2attn_sparsity[str(level + 1)]}.")
+                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+                    
+                    if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        break
+                # positions where sparsity of mlp can be increased
+                while True:
+                    mlp_incr_id = random.randint(0, len(offspring)/2 - 1)
+                    layer_name = layer_names[mlp_incr_id*2 + 1]
+                    level = offspring[mlp_incr_id*2 + 1]
+                    if level + 1 > max_level:
+                        continue
+                    # print(f"Try to reduce {layer_name} to level {level + 1}....")
+                    # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level + 1)]}.")
+                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+
+                    if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        break
+                offspring[attn_decr_id] -= 1
+                offspring[attn_incr_id] += 1
+                offspring[mlp_decr_id] -= 1
+                offspring[mlp_incr_id] += 1
+            # avoid duplicates
+            if offspring in offspring_list:
+                print("Duplicate offsprings")
+                continue
+            # skip if total deviation exceeds specified threshold
+            if sum(map(abs, offspring)) > max_total_deviation:
+                print("Exceed max deviation")
+                continue
+            offspring_list.append(offspring)
+
+
+        return offspring_list
+    
+    def compute_fitness(self,model, data, fitness_fn, target_logits: Optional[torch.Tensor] = None, 
+                        memory_efficient: bool = False) -> float:
+        if fitness_fn == "ppl":
+            # if memory_efficient:
+            #     return compute_perplexity_layer_per_layer(model, data)
+            return compute_perplexity(model, data)
+        else:
+            # return compute_kl_div(model, data, target_logits)
+            return NotImplementedError
+
+    def selection(self, model, parent, offspring_list, calibration_dataloader,
+                  layer_names, survivors_per_selection=[1], fitness_fn="ppl",
+                    add_parent_to_last_selection=True):
+        device = next(model.parameters()).device
+        self.db.load_level_layers(model, layer_names, parent)
+        for num_survive in survivors_per_selection:
+            # If specified, add parent to last_selection if not present
+            if add_parent_to_last_selection:
+                if parent not in offspring_list:
+                    offspring_list.append(parent)
+
+            target_logits_minibatch = None
+            # if fitness_fn == "kl":
+            #     target_logits_minibatch = [target_logits[i] for i in minibatch_ids]
+            fitnesses = []
+
+            data = []
+            for inputs in calibration_dataloader:
+                for k, v in inputs.items():
+                    inputs[k] = v.to(device)
+                data.append(inputs)
+            for i, candidate in enumerate(offspring_list):
+                self.db.load_level_layers(model, layer_names, candidate)
+                fitness = self.compute_fitness(model, data, fitness_fn, target_logits_minibatch)
+                fitnesses.append(fitness)
+                print(f"Candidate {i} is evaluated.")
+            # Keep only best
+            best_ids = np.argsort(fitnesses)[:num_survive]
+            offspring_list, train_fitnesses = [offspring_list[i] for i in best_ids], [fitnesses[i] for i in best_ids]
+        # In the end we have lists with single element
+        train_fitness = train_fitnesses[0]
+        parent = offspring_list[0]
+        return parent, train_fitness
 
 class StructDatabase:
     def __init__(self, path, dense):
         self.db = torch.load(path)
+        self.level2attn_sparsity = dict()
+        self.level2mlp_sparsity = dict()
         denselayers = find_layers(dense)
         dev = next(iter(denselayers.values())).weight.device
         # dev = "cpu"
@@ -525,11 +657,22 @@ class StructDatabase:
             # layers[name].weight.data = sd[name + '.weight'].to(layers[name].weight.device).to(torch.bfloat16)
             # layers[name].bias.data = sd[name + '.bias']
             return
-        layers[name].weight.data = self.db[name][config].to(layers[name].weight.device)
+        if isinstance(layers, dict):
+            layers[name].weight.data = self.db[name][config].to(layers[name].weight.device)
+        else:
+            layer = layers.get_submodule(name)
+            layer.weight.data = self.db[name][config].to(layer.weight.device)
         # layers[name].weight.data = self.db[name][config].to(layers[name].weight.device).to(torch.bfloat16)
         # layers[name].bias.data = self.biases[name]
         # if config == '1.0000':
             # layers[name].bias.data = torch.zeros_like(layers[name].bias.data)
+
+    def load_level_layers(self, model, layer_names, level_list):
+        for layer_name, level in zip(layer_names, level_list):
+            if "attn" in layer_name:
+                self.load(model, layer_name, self.level2attn_sparsity[str(level)])
+            elif "mlp" in layer_name:
+                self.load(model, layer_name, self.level2mlp_sparsity[str(level)])
 
     def stitch(self, layers, config):
         for name in config:
@@ -572,14 +715,16 @@ class StructDatabase:
             i = 5
             attention = {}
             while ' ' in lines[i]:
-                time, level = lines[i].strip().split(' ')
-                attention[level] = float(time)
+                time, sparsity, level = lines[i].strip().split(' ')
+                attention[sparsity] = float(time)
+                self.level2attn_sparsity[level] = sparsity
                 i += 1
             fc = {}
             i += 1
             while i < len(lines):
-                time, level = lines[i].strip().split(' ')
-                fc[level] = float(time)
+                time, sparsity, level = lines[i].strip().split(' ')
+                fc[sparsity] = float(time)
+                self.level2mlp_sparsity[level] = sparsity
                 i += 1
         timings = {}
         for name in self.db:
@@ -705,56 +850,91 @@ def _run_llama(model, batch, loss=False, retmoved=False):
 @torch.no_grad()
 def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str, run_name: str):
     db_file = f'database_{run_name}.db'
-    # module.to("cuda")
+    # module.to("cuda:2")
     # module.to(torch.bfloat16)
-    gen_transformerdb(
-        db_file,
-        _get_model(module),
-        _run_llama,
-        _dataloader_builder(
-            dataloader,
-            batchsize=loader_batchsize,
-            nsamples=loader_nsamples,
-        ),
-        headcount=module.config.num_attention_heads,
-        headsize=module.config.hidden_size // module.config.num_attention_heads,
-        fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
-        attname='self_attn.o_proj',
-        fcname='mlp.down_proj')
+    # gen_transformerdb(
+    #     db_file,
+    #     _get_model(module),
+    #     _run_llama,
+    #     _dataloader_builder(
+    #         dataloader,
+    #         batchsize=loader_batchsize,
+    #         nsamples=loader_nsamples,
+    #     ),
+    #     headcount=module.config.num_attention_heads,
+    #     headsize=module.config.hidden_size // module.config.num_attention_heads,
+    #     fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
+    #     attname='self_attn.o_proj',
+    #     fcname='mlp.down_proj')
 
     model = _get_model(module)()
     db = StructDatabase(db_file, model)
 
-    error_file = f'errors_squared_{run_name}.txt'
-    compute_squared(
-        db,
-        _get_model(module),
-        _dataloader_builder(
-            dataloader,
-            batchsize=loader_batchsize,
-            nsamples=1024, # Please adjust this number for efficiency
-        ),
-        _run_llama,
-        error_file
-    )
-    torch.cuda.empty_cache()
+    # error_file = f'errors_squared_{run_name}.txt'
+    # compute_squared(
+    #     db,
+    #     _get_model(module),
+    #     _dataloader_builder(
+    #         dataloader,
+    #         batchsize=loader_batchsize,
+    #         nsamples=1024, # Please adjust this number for efficiency
+    #     ),
+    #     _run_llama,
+    #     error_file
+    # )
+    # torch.cuda.empty_cache()
 
-    errors = db.load_errors(error_file)
+    # errors = db.load_errors(error_file)
     baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
+    # module.to("cuda:2")
+    # print(f"attn level2sparsity dict: {db.level2attn_sparsity}")
+    # print(f"mlp level2sparsity dict: {db.level2mlp_sparsity}")
+    layer_names = []
+    for name in db.db:
+        layer_names.append(name)
+        print(name)
+    parent = [5 for _ in layer_names]
+    struct_evo_search = StructuredEvoSearch(db=db)
 
-    struct_spdy = StructuredSPDY(
-        target, db, errors, baselinetime, prunabletime, timings,
-        module, _run_llama,
-        _dataloader_builder(
+    generation_number = 20
+    for generation in range(generation_number):
+        print(f"Generation {generation + 1}/{generation_number}")
+        print("Start to generate offspring.")
+        offspring_list = struct_evo_search.generate_offspring(
+            parent=parent, layer_names=layer_names, offspring_num=64)
+        print("Offspring generation is over. Ready to select.")
+
+        parent, train_fitness = struct_evo_search.selection(
+            model=module,
+            parent=parent,
+            offspring_list=offspring_list, 
+            calibration_dataloader=_dataloader_builder(
             dataloader,
             batchsize=loader_batchsize,
-            nsamples=256, # Please adjust this number for efficiency
+            nsamples=8, # Please adjust this number for efficiency
         ),
-    )
+        layer_names=layer_names)
+        print(f"Selection of generation {generation + 1} is over.")
+        print(f"Best fitness value of generation {generation + 1} is {train_fitness}")
+    profile = f'profile"_{target}_{run_name}.txt'
+    with open(profile, "w") as f:
+        f.write("\n".join([f"{layer_name}: {level}" for layer_name, level in zip(layer_names, parent)]))
+    print("The final child is: ")
+    print(parent)
+    db.load_level_layers(module, layer_names, parent)
+    # struct_spdy = StructuredSPDY(
+    #     target, db, errors, baselinetime, prunabletime, timings,
+    #     module, _run_llama,
+    #     _dataloader_builder(
+    #         dataloader,
+    #         batchsize=loader_batchsize,
+    #         nsamples=256, # Please adjust this number for efficiency
+    #     ),
+    # )
 
-    profile = f'profile_{target}_{run_name}.txt'
-    struct_spdy.search(profile)
-    db.load_file(module, profile)
+    # profile = f'profile_{target}_{run_name}.txt'
+    # struct_spdy.search(profile)
+    # db.load_file(module, profile)
     # For flexibility, the weights are saved as full matrix, please do shrinking when you need.
     # shrink(module)
     # os.remove(db_file)
