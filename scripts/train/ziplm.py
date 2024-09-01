@@ -509,10 +509,11 @@ class StructuredEvoSearch:
         self.data = []
         for inputs in calibration_dataloader:
             self.data.append(inputs)
-    def generate_offspring(self, parent, layer_names, offspring_num, 
+    def generate_offspring(self, parent, layer_names, offspring_num, group_num=8,
                            max_level=10, max_total_deviation=9999):
         
         print(f"Parent: {parent}")
+        group_size = int(len(parent) / group_num)
 
         offspring_list = []
         offspring_list.append(parent)  # Elitist EA
@@ -523,61 +524,88 @@ class StructuredEvoSearch:
             # mutate offspring
             num_flips = min(random.randint(1, 5), random.randint(1, 5))  # bias towards lower values
             for _ in range(num_flips):
-                # positions where sparsity of attn can be decreased
+                # Group to decrease
                 while True:
-                    attn_decr_id = random.randint(0, len(offspring)/2 - 1)
-                    layer_name = layer_names[attn_decr_id*2]
-                    level = offspring[attn_decr_id*2]
+                    group_decr_id = random.randint(0, group_num - 1)
+                    layer_name = layer_names[group_decr_id * group_size]
+                    level = offspring[group_decr_id * group_size]
                     if level - 1 < 0:
                         continue
-                    # print(f"Try to reduce {layer_name} to level {level - 1}....")
-                    # print(f"The sparsity is {self.db.level2attn_sparsity[str(level - 1)]}.")
-                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
                     if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
                         break 
-                # positions where sparsity of mlp can be decreased
+                # Group to increase
                 while True:
-                    mlp_decr_id = random.randint(0, len(offspring)/2 - 1)
-                    layer_name = layer_names[mlp_decr_id*2 + 1]
-                    level = offspring[mlp_decr_id*2 + 1]
-                    if level - 1 < 0:
-                        continue
-                    # print(f"Try to reduce {layer_name} to level {level - 1}....")
-                    # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level - 1)]}.")
-                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
-
-                    if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                        break 
-                # positions where sparsity of attn can be increased
-                while True:
-                    attn_incr_id = random.randint(0, len(offspring)/2 - 1)
-                    layer_name = layer_names[attn_incr_id*2]
-                    level = offspring[attn_incr_id*2]
+                    group_incr_id = random.randint(0, group_num - 1)
+                    layer_name = layer_names[group_incr_id * group_size]
+                    level = offspring[group_incr_id * group_size]
                     if level + 1 > max_level:
                         continue
-                    # print(f"Try to increase {layer_name} to level {level + 1}....")
-                    # print(f"The sparsity is {self.db.level2attn_sparsity[str(level + 1)]}.")
-                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
-                    
                     if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
                         break
-                # positions where sparsity of mlp can be increased
-                while True:
-                    mlp_incr_id = random.randint(0, len(offspring)/2 - 1)
-                    layer_name = layer_names[mlp_incr_id*2 + 1]
-                    level = offspring[mlp_incr_id*2 + 1]
-                    if level + 1 > max_level:
-                        continue
-                    # print(f"Try to reduce {layer_name} to level {level + 1}....")
-                    # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level + 1)]}.")
-                    # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+                for i in range(group_size):
 
-                    if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
-                        break
-                offspring[attn_decr_id*2] -= 1
-                offspring[attn_incr_id*2] += 1
-                offspring[mlp_decr_id*2 + 1] -= 1
-                offspring[mlp_incr_id*2 + 1] += 1
+                    offspring[group_decr_id * group_size + i] -= 1
+                    offspring[group_incr_id * group_size + i] += 1
+
+                # # positions where sparsity of attn can be decreased
+                # while True:
+                #     attn_decr_id = random.randint(0, len(offspring)/2 - 1)
+                #     layer_name = layer_names[attn_decr_id*2]
+                #     level = offspring[attn_decr_id*2]
+                #     if level - 1 < 0:
+                #         continue
+                #     # print(f"Try to reduce {layer_name} to level {level - 1}....")
+                #     # print(f"The sparsity is {self.db.level2attn_sparsity[str(level - 1)]}.")
+                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+                #     if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                #         break 
+                # # positions where sparsity of mlp can be decreased
+                # while True:
+                #     mlp_decr_id = random.randint(0, len(offspring)/2 - 1)
+                #     layer_name = layer_names[mlp_decr_id*2 + 1]
+                #     level = offspring[mlp_decr_id*2 + 1]
+                #     if level - 1 < 0:
+                #         continue
+                #     # print(f"Try to reduce {layer_name} to level {level - 1}....")
+                #     # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level - 1)]}.")
+                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+
+                #     if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                #         break 
+                # # positions where sparsity of attn can be increased
+                # while True:
+                #     attn_incr_id = random.randint(0, len(offspring)/2 - 1)
+                #     layer_name = layer_names[attn_incr_id*2]
+                #     level = offspring[attn_incr_id*2]
+                #     if level + 1 > max_level:
+                #         continue
+                #     # print(f"Try to increase {layer_name} to level {level + 1}....")
+                #     # print(f"The sparsity is {self.db.level2attn_sparsity[str(level + 1)]}.")
+                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+                    
+                #     if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                #         break
+                # # positions where sparsity of mlp can be increased
+                # while True:
+                #     mlp_incr_id = random.randint(0, len(offspring)/2 - 1)
+                #     layer_name = layer_names[mlp_incr_id*2 + 1]
+                #     level = offspring[mlp_incr_id*2 + 1]
+                #     if level + 1 > max_level:
+                #         continue
+                #     # print(f"Try to reduce {layer_name} to level {level + 1}....")
+                #     # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level + 1)]}.")
+                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
+
+                #     if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                #         break
+
+
+
+
+                # offspring[attn_decr_id*2] -= 1
+                # offspring[attn_incr_id*2] += 1
+                # offspring[mlp_decr_id*2 + 1] -= 1
+                # offspring[mlp_incr_id*2 + 1] += 1
             # avoid duplicates
             if offspring in offspring_list:
                 print("Duplicate offsprings")
@@ -591,7 +619,7 @@ class StructuredEvoSearch:
 
         return offspring_list
     
-    def compute_fitness(self,model, data, fitness_fn, target_logits: Optional[torch.Tensor] = None, 
+    def compute_fitness(self, model, data, fitness_fn, target_logits: Optional[torch.Tensor] = None, 
                         memory_efficient: bool = False) -> float:
         if fitness_fn == "ppl":
             # if memory_efficient:
@@ -602,7 +630,7 @@ class StructuredEvoSearch:
             return NotImplementedError
 
     def selection(self, model, parent, offspring_list,
-                  layer_names, survivors_per_selection=[8, 2, 1], samples_per_selection=[1, 2, 8], fitness_fn="ppl",
+                  layer_names, survivors_per_selection=[8, 4, 2, 1], samples_per_selection=[2, 4, 8, 16], fitness_fn="ppl",
                     add_parent_to_last_selection=True):
         
         self.db.load_level_layers(model, layer_names, parent)
@@ -651,7 +679,7 @@ class StructDatabase:
             for sparsity in list(self.db[name].keys()):
                 self.db[name][sparsity] = self.db[name][sparsity].to(dev)
         for name in self.db:
-            self.db[name]['1.0000'] = torch.zeros_like(denselayers[name].weight.data)
+            self.db[name]['1.0000'] = torch.zeros_like(denselayers[name].weight.data).to(dev)
         sd = dense.state_dict()
         # self.biases = {n: sd[n + '.bias'] for n in self.db}
 
@@ -672,7 +700,7 @@ class StructDatabase:
         # layers[name].weight.data = self.db[name][config].to(layers[name].weight.device).to(torch.bfloat16)
         # layers[name].bias.data = self.biases[name]
         # if config == '1.0000':
-            # layers[name].bias.data = torch.zeros_like(layers[name].bias.data)
+        #     layers[name].bias.data = torch.zeros_like(layers[name].bias.data)
 
     def load_level_layers(self, model, layer_names, level_list):
         for layer_name, level in zip(layer_names, level_list):
@@ -901,19 +929,38 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
         layer_names.append(name)
         print(name)
     parent = [5 for _ in layer_names]
+    calib_loader = _dataloader_builder(dataloader,
+                                    batchsize=1,
+                                    nsamples=64, # Please adjust this number for efficiency
+                                        )
     struct_evo_search = StructuredEvoSearch(db=db, 
-                                            calibration_dataloader=_dataloader_builder(
-                                            dataloader,
-                                            batchsize=1,
-                                            nsamples=64, # Please adjust this number for efficiency
-                                        ),)
+                                            calibration_dataloader=calib_loader,)
+    
+    
+    # db.load_level_layers(module, layer_names, parent)
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:16], "ppl")
+    # print("parent ppl is: ", parent_ppl)
 
-    generation_number = 500
+    # first_layer_rm = copy.deepcopy(parent)
+    # first_layer_rm[0:3] = 0
+    # db.load_level_layers(module, layer_names, parent)
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:16], "ppl")
+    # print("parent ppl is: ", parent_ppl)
+
+    # db.load_level_layers(module, layer_names, parent)
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:16], "ppl")
+    # print("parent ppl is: ", parent_ppl)
+    group_num = 0
+    generation_number = 200
     for generation in range(generation_number):
+        if generation < 100:
+            group_num = 4
+        elif generation < 250:
+            group_num = 8
         print(f"Generation {generation + 1}/{generation_number}")
         print("Start to generate offspring.")
         offspring_list = struct_evo_search.generate_offspring(
-            parent=parent, layer_names=layer_names, offspring_num=16)
+            parent=parent, layer_names=layer_names, offspring_num=16, group_num=group_num)
         print("Offspring generation is over. Ready to select.")
 
         parent, train_fitness = struct_evo_search.selection(
