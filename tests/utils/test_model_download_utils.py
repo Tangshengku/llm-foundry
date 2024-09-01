@@ -4,7 +4,7 @@
 import os
 import unittest.mock as mock
 from http import HTTPStatus
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import urljoin
 
@@ -17,8 +17,12 @@ from transformers.utils import WEIGHTS_INDEX_NAME as PYTORCH_WEIGHTS_INDEX_NAME
 from transformers.utils import WEIGHTS_NAME as PYTORCH_WEIGHTS_NAME
 
 from llmfoundry.utils.model_download_utils import (
-    DEFAULT_IGNORE_PATTERNS, PYTORCH_WEIGHTS_PATTERN, SAFE_WEIGHTS_PATTERN,
-    download_from_hf_hub, download_from_http_fileserver)
+    DEFAULT_IGNORE_PATTERNS,
+    PYTORCH_WEIGHTS_PATTERN,
+    SAFE_WEIGHTS_PATTERN,
+    download_from_hf_hub,
+    download_from_http_fileserver,
+)
 
 # ======================== download_from_hf_hub tests ========================
 
@@ -95,25 +99,30 @@ from llmfoundry.utils.model_download_utils import (
     ])
 @mock.patch('huggingface_hub.snapshot_download')
 @mock.patch('huggingface_hub.list_repo_files')
-def test_download_from_hf_hub_weights_pref(mock_list_repo_files: MagicMock,
-                                           mock_snapshot_download: MagicMock,
-                                           prefer_safetensors: bool,
-                                           repo_files: List[str],
-                                           expected_ignore_patterns: List[str]):
+def test_download_from_hf_hub_weights_pref(
+    mock_list_repo_files: MagicMock,
+    mock_snapshot_download: MagicMock,
+    prefer_safetensors: bool,
+    repo_files: list[str],
+    expected_ignore_patterns: list[str],
+):
     test_repo_id = 'test_repo_id'
     save_dir = 'save_dir'
     mock_list_repo_files.return_value = repo_files
 
-    download_from_hf_hub(test_repo_id,
-                         save_dir=save_dir,
-                         prefer_safetensors=prefer_safetensors)
+    download_from_hf_hub(
+        test_repo_id,
+        save_dir=save_dir,
+        prefer_safetensors=prefer_safetensors,
+    )
     mock_snapshot_download.assert_called_once_with(
         test_repo_id,
         local_dir=save_dir,
         local_dir_use_symlinks=False,
         allow_patterns=None,
         ignore_patterns=expected_ignore_patterns,
-        token=None)
+        token=None,
+    )
 
 
 @mock.patch('huggingface_hub.snapshot_download')
@@ -185,15 +194,17 @@ SUBFOLDER_HTML = b"""
 @mock.patch.object(requests.Session, 'get')
 @mock.patch('os.makedirs')
 @mock.patch('builtins.open')
-def test_download_from_http_fileserver(mock_open: MagicMock,
-                                       mock_makedirs: MagicMock,
-                                       mock_get: MagicMock):
+def test_download_from_http_fileserver(
+    mock_open: MagicMock,
+    mock_makedirs: MagicMock,
+    mock_get: MagicMock,
+):
     model_url = f'https://cache.com/models/model/'
     save_dir = 'save_dir/'
 
     mock_open.return_value = MagicMock()
 
-    def _server_response(url: str, **kwargs: Dict[str, Any]):
+    def _server_response(url: str, **kwargs: dict[str, Any]):
         if url == model_url:
             return MagicMock(status_code=HTTPStatus.OK, content=ROOT_HTML)
         if url == urljoin(model_url, 'file1'):

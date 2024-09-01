@@ -6,6 +6,9 @@ from typing import Any, Callable, Type, TypeVar, cast
 
 __all__ = [
     'VersionedDeprecationWarning',
+    'ExperimentalWarning',
+    'experimental_function',
+    'experimental_class',
 ]
 
 
@@ -30,8 +33,9 @@ class VersionedDeprecationWarning(UserWarning):
     """
 
     def __init__(self, message: str, remove_version: str) -> None:
-        super().__init__(message +
-                         f' It will be removed in version {remove_version}.')
+        super().__init__(
+            message + f' It will be removed in version {remove_version}.',
+        )
 
 
 class ExperimentalWarning(Warning):
@@ -43,7 +47,7 @@ class ExperimentalWarning(Warning):
 
     def __init__(self, feature_name: str) -> None:
         super().__init__(
-            f'{feature_name} is experimental and may change with future versions.'
+            f'{feature_name} is experimental and may change with future versions.',
         )
 
 
@@ -75,10 +79,12 @@ def experimental_function(feature_name: str) -> Callable[[F], F]:
     return decorator
 
 
-def experimental_class(feature_name: str) -> Callable[[Type], Type]:
+def experimental_class(
+    feature_name: str,
+) -> Callable[[Type], Type]:  # noqa: UP006
     """Class decorator to mark a class as experimental."""
 
-    def class_decorator(cls: Type):
+    def class_decorator(cls: Type):  # noqa: UP006
         original_init = cls.__init__
 
         def new_init(self: Any, *args: Any, **kwargs: Any):

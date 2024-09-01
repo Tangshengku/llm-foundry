@@ -21,7 +21,7 @@ def gen_random_batch(batch_size: int, vocab_size: int, max_seq_len: int):
                 dtype=torch.int64,
             ),
         'attention_mask':
-            torch.ones(size=(batch_size, max_seq_len), dtype=torch.bool)
+            torch.ones(size=(batch_size, max_seq_len), dtype=torch.bool),
     }
     return batch
 
@@ -85,7 +85,7 @@ def test_onnx_export(tie_word_embeddings: bool, tmp_path: pathlib.Path):
     ort_session = ort.InferenceSession(str(tmp_path / 'mpt.onnx'))
 
     for key, value in sample_input.items():
-        sample_input[key] = value.cpu().numpy()
+        sample_input[key] = value.cpu().numpy()  # pyright: ignore
 
     loaded_model_out = ort_session.run(None, sample_input)
 

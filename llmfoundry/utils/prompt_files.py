@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-from typing import List, Optional
+from typing import Optional
 
 PROMPTFILE_PREFIX = 'file::'
 
@@ -12,8 +12,8 @@ __all__ = [
 ]
 
 
-def load_prompts(prompts: List[str],
-                 prompt_delimiter: Optional[str] = None) -> List[str]:
+def load_prompts(prompts: list[str],
+                 prompt_delimiter: Optional[str] = None) -> list[str]:
     """Loads a set of prompts, both free text and from file.
 
     Args:
@@ -34,8 +34,10 @@ def load_prompts(prompts: List[str],
     return prompt_strings
 
 
-def load_prompts_from_file(prompt_path: str,
-                           prompt_delimiter: Optional[str] = None) -> List[str]:
+def load_prompts_from_file(
+    prompt_path: str,
+    prompt_delimiter: Optional[str] = None,
+) -> list[str]:
     """Load a set of prompts from a text fie.
 
     Args:
@@ -53,7 +55,8 @@ def load_prompts_from_file(prompt_path: str,
     prompt_file_path = os.path.expanduser(prompt_file_path)
     if not os.path.isfile(prompt_file_path):
         raise FileNotFoundError(
-            f'{prompt_file_path=} does not match any existing files.')
+            f'{prompt_file_path=} does not match any existing files.',
+        )
 
     with open(prompt_file_path, 'r') as f:
         prompt_string = f.read()

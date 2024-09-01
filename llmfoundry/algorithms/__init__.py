@@ -1,11 +1,12 @@
 # Copyright 2024 MosaicML LLM Foundry authors
 # SPDX-License-Identifier: Apache-2.0
 
-from composer.algorithms import (Alibi, GatedLinearUnits, GradientClipping,
-                                 LowPrecisionLayerNorm)
-from composer.trainer.dist_strategy import prepare_fsdp_module
-from composer.utils import get_device
-
+from composer.algorithms import (
+    Alibi,
+    GatedLinearUnits,
+    GradientClipping,
+    LowPrecisionLayerNorm,
+)
 
 from llmfoundry.registry import algorithms
 
