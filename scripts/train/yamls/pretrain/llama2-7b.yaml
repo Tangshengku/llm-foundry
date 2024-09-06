@@ -1,14 +1,19 @@
-data_local: ./my-copy-c4
-data_remote:  # If blank, files must be present in data_local
-tokenizer_name: facebook/opt-2.7b
-max_seq_len: 2048
-global_seed: 17
+variables:
+  data_local: ./my-copy-c4
+  data_remote:  # If blank, files must be present in data_local
+  tokenizer_name: facebook/opt-2.7b
+  global_seed: 17
 
 # Run Name
 run_name: finetune_with_fine_edu  # If left blank, will be read from env var $RUN_NAME
+
 timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/LLama2-7b-A6000_flash_level.txt
+is_prune: false
+target: 2.0
+calibration_data_size: 2048
 
 max_split_size_mb: 512
+max_seq_len: 2048
 # Model
 model:
   name: hf_causal_lm
@@ -20,7 +25,8 @@ model:
   
   # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B Shengkun/LLama2-7B-Structural-Prune-2.5x princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   pretrained: true
-  pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
+  # pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
+  pretrained_model_name_or_path: Shengkun/evo_search_2x
   # init_device: meta
   use_auth_token: true
   use_flash_attention_2: true
@@ -29,7 +35,8 @@ model:
 tokenizer:
   # name: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
   # name: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
-  name: meta-llama/Llama-2-7b-hf
+  # name: meta-llama/Llama-2-7b-hf
+  name: Shengkun/evo_search_2x
   kwargs:
     model_max_length: ${max_seq_len}
 
@@ -55,7 +62,7 @@ train_loader:
     # subset: sample-10BT
     shuffle: true
     max_seq_len: ${max_seq_len}
-    shuffle_seed: ${global_seed}
+    shuffle_seed: ${variables.global_seed}
     # hf_kwargs:
     #   name: sample-10BT
       # streaming: true
@@ -96,15 +103,15 @@ algorithms:
     clipping_type: norm
     clipping_threshold: 1.0
 
-max_duration: 40000ba  # ~ 0.4B tokens
+max_duration: 15000ba  # ~ 0.4B tokens
 eval_interval: 5000ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 256 # for clusters
+global_train_batch_size: 768 # for clusters
 # global_train_batch_size: 48 # for local devices
 
 # System
-seed: ${global_seed}
+seed: ${variables.global_seed}
 device_eval_batch_size: 16
 device_train_microbatch_size: 64
 # device_train_microbatch_size: auto
@@ -143,7 +150,7 @@ callbacks:
 #   wandb: {}
 
 # Checkpoint to local filesystem or remote object store
-save_interval: 5000ba
+save_interval: 3000ba
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
 save_folder: ./{run_name}/checkpoints
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints

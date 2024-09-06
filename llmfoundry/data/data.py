@@ -365,7 +365,7 @@ class ConcatTokensDataset(AbstractConcatTokensDataset):
         eos_text: str,
         no_wrap: bool,
         hf_id: Optional[str] = None,
-        tokenizer_call_kwargs: Optional[Dict] = None,
+        tokenizer_call_kwargs: Optional[dict] = None,
     ):
         self.hf_dataset = hf_dataset
         self.tokenizer = tokenizer

@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name=zipllm
-# SBATCH --output=srun_logs/%j-zipllm-llama2-7b-finetune.out
-# SBATCH --error=srun_logs/%j-zipllm-llama2-7b-finetune.err
-#SBATCH --output=srun_logs/%j-shearedllama-finetune.out
-#SBATCH --error=srun_logs/%j-shearedllama-finetune.err
+#SBATCH --job-name=evo_search
+# SBATCH --output=srun_logs/%j-evo_search-llama2-7b-finetune.out
+# SBATCH --error=srun_logs/%j-evo_search-llama2-7b-finetune.err
+#SBATCH --output=srun_logs/%j-evo_search-finetune.out
+#SBATCH --error=srun_logs/%j-evo_search-finetune.err
 
 #number of CPUs to be used
 # SBATCH --ntasks=1
@@ -19,9 +19,8 @@
 #Define the "gpu" partition for GPU-accelerated jobs
 #SBATCH --partition=gpu100
 #Define the number of GPUs used by your job
-#SBATCH --nodes=2
+#SBATCH --nodes=3
 #SBATCH --gres=gpu:8
-# SBATCH --exclude=gpu[268,269,271]
 #SBATCH --ntasks-per-node=1
 # SBATCH --export=NONE
 
@@ -50,7 +49,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 yaml_file=./scripts/train/yamls/pretrain/llama2-7b.yaml
 # save_folder=./srun_logs/llama2-7b-20kcali-1.5x-finetune-webedu_lr_1e4_batch1024_4096_1000ba_test
-save_folder=./srun_logs/zipllm_from_1.5_openorca_2x_20B_finetune_kd
+save_folder=./srun_logs/evo_search_2x_20B_hf
 
 source /nfs/scistore19/alistgrp/stang/miniconda3/bin/activate llama
 

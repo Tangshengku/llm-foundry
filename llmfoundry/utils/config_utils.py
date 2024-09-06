@@ -98,6 +98,7 @@ class TrainConfig:
     optimizer: dict[str, Any] = MISSING
     scheduler: dict[str, Any] = MISSING
     train_loader: dict[str, Any] = MISSING
+    knowledge_distillation: Optional[dict[str, Any]] = None
     device_train_batch_size: Union[int, float] = MISSING
     device_eval_batch_size: Union[int, float] = MISSING
     max_duration: Union[int, str] = MISSING
@@ -185,6 +186,13 @@ class TrainConfig:
 
     # Variables to ignore
     variables: Optional[dict[str, Any]] = None
+
+    # For Pruning
+    is_prune: bool = False
+    target: float = 2.0
+    timing_file: str = ""
+    calibration_data_size: int = 2048
+
 
     # Fields created by `update_batch_size_info`
     n_gpus: int = MISSING

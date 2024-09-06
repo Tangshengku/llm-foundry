@@ -504,9 +504,12 @@ class StructuredSPDY:
             self.save_profile(coefs, save)
 
 class StructuredEvoSearch:
-    def __init__(self, model, db, calibration_dataloader, fitness_fn="ppl") -> None:
+    def __init__(self, model, db, calibration_dataloader, weight_path=None, fitness_fn="ppl") -> None:
         self.db = db
         self.data = []
+        self.weight_path=weight_path
+        self.level2attn_sparsity = dict()
+        self.level2mlp_sparsity = dict()
         self.target_logits = []
         device = next(model.parameters()).device
         for inputs in calibration_dataloader:
@@ -530,55 +533,63 @@ class StructuredEvoSearch:
             print(f"Start to generate {len(offspring_list)} offspring.")
             offspring = copy.deepcopy(parent)
             # mutate offspring
-            num_flips = min(random.randint(1, 5), random.randint(1, 5))  # bias towards lower values
+            num_flips = min(random.randint(1, int(group_size/2)), random.randint(1, int(group_size/2)))  # bias towards lower values
             for _ in range(num_flips):
                 
                 if within_group:
                     # positions where sparsity of attn can be decreased
                     while True:
-                        attn_decr_id = random.randint(0, len(offspring)/ (2 * (group_index + 1)) - 1)
-                        layer_name = layer_names[attn_decr_id*2 * (group_index + 1)]
-                        level = offspring[attn_decr_id*2 * (group_index + 1)]
+                        attn_decr_id = random.randint(0, len(offspring)/ (2 * group_num) - 1)
+                        layer_name = layer_names[attn_decr_id*2 + group_index * group_size]
+                        level = offspring[attn_decr_id*2 + group_index * group_size]
                         if level - 1 < 0:
                             continue
-                        
-                        if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                            break 
+                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level - 1)]}.pt")
+                        if os.path.exists(weight_):
+                            break
+
+                        # if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                        #     break 
                     # positions where sparsity of mlp can be decreased
                     while True:
-                        mlp_decr_id = random.randint(0, len(offspring)/(2 * (group_index + 1)) - 1)
-                        layer_name = layer_names[mlp_decr_id*2 * (group_index + 1) + 1]
-                        level = offspring[mlp_decr_id*2 * (group_index + 1) + 1]
+                        mlp_decr_id = random.randint(0, len(offspring)/(2 * group_num) - 1)
+                        layer_name = layer_names[mlp_decr_id*2 + group_index * group_size + 1]
+                        level = offspring[mlp_decr_id*2 + group_index * group_size + 1]
                         if level - 1 < 0:
                             continue
-
-                        if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                            break 
+                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2mlp_sparsity[str(level - 1)]}.pt")
+                        if  os.path.exists(weight_):
+                            break
+                        # if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                        #     break 
                     # positions where sparsity of attn can be increased
                     while True:
-                        attn_incr_id = random.randint(0, len(offspring)/(2 * (group_index + 1)) - 1)
-                        layer_name = layer_names[attn_incr_id*2 * (group_index + 1)]
-                        level = offspring[attn_incr_id*2 * (group_index + 1)]
+                        attn_incr_id = random.randint(0, len(offspring)/(2 * group_num) - 1)
+                        layer_name = layer_names[attn_incr_id*2 + group_index * group_size]
+                        level = offspring[attn_incr_id*2 + group_index * group_size]
                         if level + 1 > max_level:
                             continue
-                        
-                        if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level + 1)]}.pt")
+                        if  os.path.exists(weight_):
                             break
+                        # if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        #     break
                     # positions where sparsity of mlp can be increased
                     while True:
-                        mlp_incr_id = random.randint(0, len(offspring)/(2 * (group_index + 1)) - 1)
-                        layer_name = layer_names[mlp_incr_id*2 * (group_index + 1) + 1]
-                        level = offspring[mlp_incr_id*2 * (group_index + 1) + 1]
+                        mlp_incr_id = random.randint(0, len(offspring)/(2 * group_num) - 1)
+                        layer_name = layer_names[mlp_incr_id*2 + group_index * group_size + 1]
+                        level = offspring[mlp_incr_id*2 + group_index * group_size + 1]
                         if level + 1 > max_level:
                             continue
-
-                        if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2mlp_sparsity[str(level + 1)]}.pt")
+                        if  os.path.exists(weight_):
                             break
-                    offspring[attn_decr_id*2 * (group_index + 1)] -= 1
-                    offspring[attn_incr_id*2* (group_index + 1)] += 1
-                    offspring[mlp_decr_id*2 * (group_index + 1) + 1] -= 1
-                    offspring[mlp_incr_id*2  (group_index + 1) + 1] += 1
-
+                        # if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        #     break
+                    offspring[attn_decr_id*2 + group_index * group_size] -= 1
+                    offspring[attn_incr_id*2 + group_index * group_size] += 1
+                    offspring[mlp_decr_id*2 + group_index * group_size + 1] -= 1
+                    offspring[mlp_incr_id*2 + group_index * group_size + 1] += 1
                 else:
                     # Group to decrease
                     while True:
@@ -587,8 +598,11 @@ class StructuredEvoSearch:
                         level = offspring[group_decr_id * group_size]
                         if level - 1 < 0:
                             continue
-                        if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                            break 
+                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level - 1)]}.pt")
+                        if  os.path.exists(weight_):
+                            break
+                        # if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
+                        #     break 
                     # Group to increase
                     while True:
                         group_incr_id = random.randint(0, group_num - 1)
@@ -596,8 +610,11 @@ class StructuredEvoSearch:
                         level = offspring[group_incr_id * group_size]
                         if level + 1 > max_level:
                             continue
-                        if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level + 1)]}.pt")
+                        if  os.path.exists(weight_):
                             break
+                        # if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
+                        #     break
                     for i in range(group_size):
 
                         offspring[group_decr_id * group_size + i] -= 1
@@ -685,11 +702,53 @@ class StructuredEvoSearch:
             return compute_kl_div(model, data, target_logits)
             return NotImplementedError
 
+    def load_weight(self, model, layer_names, parent, weight_path):
+        assert hasattr(model, "state")
+        for layer_name, new_level, old_level in zip(layer_names, parent, model.state):
+            if new_level != old_level:
+                layer = model.get_submodule(layer_name)
+                if "attn" in layer_name:
+                    sparsity = self.level2attn_sparsity[str(new_level)]
+                else:
+                    sparsity = self.level2mlp_sparsity[str(new_level)]
+                layer.weight.data = torch.load(os.path.join(
+                    weight_path, layer_name, f"{sparsity}.pt"), map_location=model.model.device).to(layer.weight.dtype)
+        # Update model state
+        model.state = parent
+
+    def get_berttimings(self, path):
+        with open(path, 'r') as f:
+            lines = f.readlines()
+            baselinetime = float(lines[1])
+            prunabletime = float(lines[3])
+            i = 5
+            attention = {}
+            while ' ' in lines[i]:
+                time, sparsity, level = lines[i].strip().split(' ')
+                attention[sparsity] = float(time)
+                self.level2attn_sparsity[level] = sparsity
+                i += 1
+            fc = {}
+            i += 1
+            while i < len(lines):
+                time, sparsity, level = lines[i].strip().split(' ')
+                fc[sparsity] = float(time)
+                self.level2mlp_sparsity[level] = sparsity
+                i += 1
+        timings = {}
+        # for name in self.db:
+        #     # if "down_proj" not in name:
+        #     #     continue
+        #     timings[name] = attention if ('attention' in name or 'attn' in name) else fc
+        #     # timings[name] = fc
+        return baselinetime, prunabletime, timings
+
     def selection(self, model, parent, offspring_list,
                   layer_names, survivors_per_selection=[8, 4, 2, 1], samples_per_selection=[2, 4, 8, 16], fitness_fn="ppl",
                     add_parent_to_last_selection=True):
         
-        self.db.load_level_layers(model, layer_names, parent)
+        # self.db.load_level_layers(model, layer_names, parent)
+        self.load_weight(model, layer_names, parent, self.weight_path)
         for num_survive, num_sample in zip(survivors_per_selection, samples_per_selection):
             # If specified, add parent to last_selection if not present
             if add_parent_to_last_selection:
@@ -712,7 +771,8 @@ class StructuredEvoSearch:
             data = self.data[:num_sample]
             target_logits_minibatch = self.target_logits[:num_sample]
             for i, candidate in enumerate(offspring_list):
-                self.db.load_level_layers(model, layer_names, candidate)
+                # self.db.load_level_layers(model, layer_names, candidate)
+                self.load_weight(model, layer_names, candidate, self.weight_path)
                 fitness = self.compute_fitness(model, data, fitness_fn, target_logits_minibatch)
                 fitnesses.append(fitness)
                 print(f"Candidate {i} is evaluated.")
@@ -960,8 +1020,24 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     #     fcname='mlp.down_proj')
 
     model = _get_model(module)()
-    db = StructDatabase(db_file, model)
+    # db = StructDatabase(db_file, model)
 
+    weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/prune_with_fine_edu_20kcali_2x"
+    # db_ = db.db
+    # for name in db_:
+    #     layer_dir = os.path.join(weight_path, name)
+    #     if not os.path.exists(layer_dir):
+    #         os.mkdir(layer_dir)
+    #     for sparsity in list(db_[name].keys()):
+    #         # sparsity_dir = os.path.join(layer_dir, sparsity)
+    #         # if not os.path.exists(sparsity_dir):
+    #         #     os.mkdir(sparsity_dir)
+    #         torch.save(db_[name][sparsity], f"{layer_dir}/{sparsity}.pt")
+    #     # sparsity_dir = os.path.join(layer_dir, "1.0000")
+    #     # if not os.path.exists(sparsity_dir):
+    #     #     os.mkdir(sparsity_dir)
+    #     torch.save(torch.zeros_like(db_[name][sparsity]).cpu(), f"{layer_dir}/1.0000.pt")
+    # return
     # error_file = f'errors_squared_{run_name}.txt'
     # compute_squared(
     #     db,
@@ -977,39 +1053,59 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     # torch.cuda.empty_cache()
 
     # errors = db.load_errors(error_file)
-    baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
-    module.to("cuda:2")
+    # baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
+    module.to("cuda:1")
+    layer_names = []
+    layer_list = os.listdir(weight_path)
+    for i in range(int(len(layer_list)/2)):
+        layer_names.append(f"model.model.layers.{i}.self_attn.o_proj")
+        layer_names.append(f"model.model.layers.{i}.mlp.down_proj")
+    print(layer_names)
+    return
+    module.state = [None] * len(layer_names)
     # print(f"attn level2sparsity dict: {db.level2attn_sparsity}")
     # print(f"mlp level2sparsity dict: {db.level2mlp_sparsity}")
-    layer_names = []
-    for name in db.db:
-        layer_names.append(name)
-        print(name)
-    parent = [5 for _ in layer_names]
+    # layer_names = []
+    # for name in db.db:
+    #     layer_names.append(name)
+    #     print(name)
+    # 2x acceleration
+    # parent = [5 for _ in layer_names]
+    # 2.5x acceleration
+    parent = [6 for _ in layer_names]
     calib_loader = _dataloader_builder(dataloader,
                                     batchsize=1,
                                     nsamples=64, # Please adjust this number for efficiency
                                         )
-    struct_evo_search = StructuredEvoSearch(model=module, db=db, 
+    struct_evo_search = StructuredEvoSearch(model=module, db=None, weight_path=weight_path,
                                             calibration_dataloader=calib_loader, fitness_fn="ppl")
+    struct_evo_search.get_berttimings(timings_file)
     
-    
+    # struct_evo_search.load_weight(module, layer_names, parent, weight_path)
+    # return
     # db.load_level_layers(module, layer_names, parent)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "ppl")
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
     # print("parent ppl is: ", parent_ppl)
 
     # first_layer_rc = copy.deepcopy(parent)
     # first_layer_rc[0] = 0
     # first_layer_rc[1] = 0
     # db.load_level_layers(module, layer_names, first_layer_rc)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "ppl")
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
     # print("first layer ppl is: ", parent_ppl)
+
+    # last_layer_rc = copy.deepcopy(parent)
+    # last_layer_rc[2] = 0
+    # last_layer_rc[3] = 0
+    # db.load_level_layers(module, layer_names, last_layer_rc)
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
+    # print("2nd layer ppl is: ", parent_ppl)
 
     # last_layer_rc = copy.deepcopy(parent)
     # last_layer_rc[4] = 0
     # last_layer_rc[5] = 0
     # db.load_level_layers(module, layer_names, last_layer_rc)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "ppl")
+    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
     # print("3rd layer ppl is: ", parent_ppl)
 
     # target_logits = []
@@ -1017,23 +1113,38 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
 
 
     group_num = 0
-    generation_number = 200
+    generation_number = 30
     within_group = False
     group_index = 0
+    offspring_num = 16
     for generation in range(generation_number):
-        if generation < 50:
+        if generation < 10:
             group_num = 4
-        elif generation < 100:
+        elif generation < 30:
             group_num = 8
-        else:
+        elif generation < 50:
+            group_num = 16
+        elif generation < 100:
+            offspring_num = 8
             group_num = 8
             within_group = True
-            group_index = (generation - 100) % group_num
+            # group_index = 0
+            group_index = (generation - 50) % group_num
+        # else:
+        #     group_num = 16
+        #     within_group = True
+        #     # group_index = 0
+        #     group_index = (generation - 70) % group_num
 
         print(f"Generation {generation + 1}/{generation_number}")
+        if within_group:
+            group_size = int(len(parent) / group_num)
+            group_level = parent[group_size*group_index : group_size*group_index + group_size]
+            if all(i == 0 for i in group_level) or all(i == 10 for i in group_level):
+                continue
         print("Start to generate offspring.")
         offspring_list = struct_evo_search.generate_offspring(
-            parent=parent, layer_names=layer_names, offspring_num=16, group_num=group_num, within_group=within_group, group_index=group_index)
+            parent=parent, layer_names=layer_names, offspring_num=offspring_num, group_num=group_num, within_group=within_group, group_index=group_index)
         print("Offspring generation is over. Ready to select.")
 
         parent, train_fitness = struct_evo_search.selection(
@@ -1048,7 +1159,7 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
         f.write("\n".join([f"{layer_name}: {level}" for layer_name, level in zip(layer_names, parent)]))
     print("The final child is: ")
     print(parent)
-    db.load_level_layers(module, layer_names, parent)
+    struct_evo_search.load_weight(module, layer_names, parent, weight_path)
     # struct_spdy = StructuredSPDY(
     #     target, db, errors, baselinetime, prunabletime, timings,
     #     module, _run_llama,

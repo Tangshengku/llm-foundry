@@ -3,6 +3,7 @@
 import gc
 import logging
 import os
+import copy
 import time
 import warnings
 from typing import Any, Optional, Union
@@ -58,9 +59,17 @@ from llmfoundry.utils.exceptions import (
     TrainDataLoaderLocation,
 )
 from llmfoundry.utils.registry_utils import import_file
+from llmfoundry.algorithms import KnowledgeDistillation
+
+from .ziplm import *
+from .timing import *
 
 log = logging.getLogger(__name__)
 
+def get_parameter_number(model):
+    total_num = sum(p.numel() for p in model.parameters())
+    trainable_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {'Total': total_num, 'Trainable': trainable_num}
 
 def validate_config(train_config: TrainConfig):
     """Validates compatible model and dataloader selection."""
@@ -321,6 +330,8 @@ def train(cfg: DictConfig) -> Trainer:
     init_context = process_init_device(model_config, fsdp_config)
     logged_cfg.update({'fsdp_config': fsdp_config}, merge=True)
 
+    from streaming.base.util import clean_stale_shared_memory
+    clean_stale_shared_memory()
     # Build tokenizer
     log.info('Building tokenizer...')
     tokenizer_name = train_cfg.tokenizer['name']
@@ -474,12 +485,81 @@ def train(cfg: DictConfig) -> Trainer:
     assert isinstance(name, str)
     assert isinstance(model_config, dict)
     model = build_composer_model(
-        name=name,
+       name=name,
         tokenizer=tokenizer,
         init_context=init_context,
         master_weights_dtype=model_config.pop('master_weights_dtype', None),
         cfg=model_config,
     )
+
+    if "knowledge_distillation" in cfg and cfg.knowledge_distillation.teacher_name_or_path is not None:
+        print(f"[Debug: Knowledge Distillation] config = {cfg.knowledge_distillation}")
+        teacher_config = copy.deepcopy(model_config)
+        # print(teacher_config)
+        teacher_config['pretrained_model_name_or_path'] = cfg.knowledge_distillation.teacher_name_or_path
+        teacher = build_composer_model(
+            name=name, cfg=teacher_config, tokenizer=tokenizer,
+            init_context=init_context,
+            master_weights_dtype=teacher_config.get('master_weights_dtype', None),)
+        teacher.eval()
+    
+    print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
+    shrink(model=model)
+    print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+    # load_pruned_model(module=model, 
+    #                   db_file="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database_prune_with_fine_edu_20kcali_2x.db",
+    #                   profile="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/profile_2.0_prune_with_fine_edu_20kcali_2x_4_layers.txt")
+    # torch.save(model.state_dict(), \
+    #                "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/2k_fineweb_oneshot_4layers/model.pt")
+    # return
+    # Push the Finetuned Weight to Huggingface
+    # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/llama2-7b-20kcali-1.5x-finetune-30000batch_lr_1e-4_4096_fineweb/ep1-ba30000-rank0.pt")
+    # model.load_state_dict(state["state"]["model"])
+    # print("Finetuned model is loaded, Ready to prune")
+    # model.tokenizer.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib-Fineweb-Finetuned")
+    # model.model.push_to_hub("Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib-Fineweb-Finetuned")
+
+    # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_4_and_8_group/model.pt", map_location="cpu")
+    # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+    #     state, prefix='model.')
+    # model.model.load_state_dict(state)
+    # shrink(model=model)
+    # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+    # # Some pushing codes, please just ignore
+    # model.tokenizer.push_to_hub("Shengkun/evo_search_2x")
+    # model.model.push_to_hub("Shengkun/evo_search_2x")
+    # model.tokenizer.push_to_hub("Shengkun/Llama3-8B-Structural-Pruning-1.5")
+    # model.model.push_to_hub("Shengkun/Llama3-8B-Structural-Pruning-1.5")
+
+    timing = False
+    if timing:
+        timing_main(model, "cuda", train_loader.dataloader, is_bert=False)
+        return
+
+    if train_cfg.is_prune:
+        oneshot_prune(train_loader.dataloader, model, target=train_cfg.target, loader_batchsize=1, \
+                      loader_nsamples=train_cfg.calibration_data_size, timings_file=train_cfg.timing_file, \
+                        run_name=run_name)
+        # For gradual pruning, the weight might not be pushed to huggingface directly
+        # So, a compromised solution is to save the pruned weights locally
+        # Please uncomment this if you want to save the weight locally
+        torch.save(model.state_dict(), \
+                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search/model.pt")
+        return
+    
+    # Load the weight of pruned model
+    # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/20kcali_gradual_from_1.5/model.pt")
+    # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+    #     state, prefix='model.')
+    # model.model.load_state_dict(state)
+    # shrink(model=model)
+    # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+    # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_within_group_2x/model.pt", map_location="cpu")
+    # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+    #     state, prefix='model.')
+    # model.model.load_state_dict(state)
+    # shrink(model=model)
+    # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
 
     _log_num_params(model, logged_cfg)
 
@@ -504,6 +584,16 @@ def train(cfg: DictConfig) -> Trainer:
         e.location = EvalDataLoaderLocation
         raise e
 
+    if "knowledge_distillation" in cfg and cfg.knowledge_distillation.teacher_name_or_path is not None:
+        # assume algorithm is not None because we will always have `mask_pruned_weights`
+        algorithms.append(KnowledgeDistillation(
+            teacher,
+            cfg.knowledge_distillation.temperature,
+            cfg.knowledge_distillation.hardness_ce,
+            cfg.knowledge_distillation.hardness_kldiv,
+            cfg.knowledge_distillation.hardness_squarehead
+            )
+        )
     compile_config = train_cfg.compile_config
     # Build the Trainer
     log.info('Building trainer...')

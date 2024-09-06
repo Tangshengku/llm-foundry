@@ -13,6 +13,8 @@ from llmfoundry.registry import algorithms
 from composer.core import Event, Algorithm
 import torch
 import torch.nn.functional as TF
+from composer.distributed import prepare_fsdp_module
+from composer.utils import get_device
 
 
 class MaskPrunedWeights(Algorithm):

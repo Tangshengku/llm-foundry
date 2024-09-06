@@ -1054,7 +1054,7 @@ def alpaca_preprocessing_function(inp: dict) -> PromptResponseDict:
     return {'prompt': prompt, 'response': response}
 
 @dataset_constructor.register('HuggingFaceFW/fineweb-edu')
-def webedu_preprocessing_function(inp: Dict) -> Dict[str, str]:
+def webedu_preprocessing_function(inp: dict) -> dict[str, str]:
     """Split out prompt/response from text."""
     try:
         prompt = ""
