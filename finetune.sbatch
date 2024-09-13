@@ -19,7 +19,7 @@
 #Define the "gpu" partition for GPU-accelerated jobs
 #SBATCH --partition=gpu100
 #Define the number of GPUs used by your job
-#SBATCH --nodes=3
+#SBATCH --nodes=1
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=1
 # SBATCH --export=NONE
@@ -49,11 +49,11 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 yaml_file=./scripts/train/yamls/pretrain/llama2-7b.yaml
 # save_folder=./srun_logs/llama2-7b-20kcali-1.5x-finetune-webedu_lr_1e4_batch1024_4096_1000ba_test
-save_folder=./srun_logs/evo_search_2x_20B_hf
+save_folder=./srun_logs/evo_search_2.5x_reg_gradual_10B
 
 source /nfs/scistore19/alistgrp/stang/miniconda3/bin/activate llama
 
 srun /usr/bin/nvidia-smi
 
-if [[ $num_nodes == 1 ]]; then composer ./scripts/train/train.py $yaml_file save_folder=$save_folder; 
+if [[ $num_nodes == 1 ]]; then composer ./scripts/train/train_sparse.py $yaml_file save_folder=$save_folder; 
 else srun --output=$LOG_DIR/%x-%j-%n.out bash ./srun_launch.sh $yaml_file save_folder=$save_folder; fi

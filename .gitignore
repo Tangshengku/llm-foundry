@@ -167,5 +167,5 @@ llama3-8b*/
 profile*.txt
 srun_logs/
 tmp_data/
-evo_search_fineweb*/
+evo_search*/
 weights/

@@ -31,9 +31,17 @@ from llmfoundry.command_utils.train import (
     train_from_yaml,
     validate_config,
 )
+from llmfoundry.command_utils.train_sparse import (
+    train_from_yaml_sparse,
+)
+from llmfoundry.command_utils.data_prep.convert_custom_pretraining import (
+    convert_custom_pretraining_dataset,
+    convert_custom_pretraining_dataset_from_args,
+)
 
 __all__ = [
     'train',
+    'train_from_yaml_sparse',
     'train_from_yaml',
     'TrainConfig',
     'TRAIN_CONFIG_KEYS',
@@ -50,4 +58,6 @@ __all__ = [
     'convert_text_to_mds_from_args',
     'convert_delta_to_json_from_args',
     'fetch_DT',
+    'convert_custom_pretraining_dataset_from_args',
+    'convert_custom_pretraining_dataset',
 ]

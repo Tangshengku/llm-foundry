@@ -8,7 +8,8 @@ from torch.nn import Module
 from transformers.modeling_utils import prune_linear_layer
 from typing import List, Optional, Tuple, Union
 
-from metrics import compute_perplexity, compute_kl_div
+from .metrics import compute_perplexity, compute_kl_div, compute_task_metric, compute_mse
+
 
 
 def find_layers(module, layers=[nn.Conv2d, nn.Linear], name=''):
@@ -45,8 +46,12 @@ class NoOutput(Module):
         return hidden_states
 
 
-def shrink(model, update_mask=False):
-    for layer in model.model.model.layers:
+def shrink(model, update_mask=False, is_transformers=False):
+    if is_transformers:
+        layers = model.model.layers
+    else:
+        layers = model.model.model.layers
+    for layer in layers:
         if not isinstance(layer.self_attn, NoAttention):
             weight = layer.self_attn.o_proj.weight
             if torch.all(weight == 0):
@@ -320,6 +325,14 @@ def gen_transformerdb(
         ziplm[name].free()
 
     torch.save(db, filename)
+    weight_path="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/2.5x_gradual_from_2_reg"
+    for name in db:
+        layer_dir = os.path.join(weight_path, name)
+        if not os.path.exists(layer_dir):
+            os.mkdir(layer_dir)
+        for sparsity in list(db[name].keys()):
+            torch.save(db[name][sparsity], f"{layer_dir}/{sparsity}.pt")
+        torch.save(torch.zeros_like(db[name][sparsity]).cpu(), f"{layer_dir}/1.0000.pt")
 
 class StructuredSPDY:
     def __init__(
@@ -510,11 +523,13 @@ class StructuredEvoSearch:
         self.weight_path=weight_path
         self.level2attn_sparsity = dict()
         self.level2mlp_sparsity = dict()
+        self.attnlevel2sparsity = dict()
+        self.mlplevel2sparsity = dict()
         self.target_logits = []
         device = next(model.parameters()).device
         for inputs in calibration_dataloader:
             self.data.append(inputs)
-            if fitness_fn == "kl":
+            if fitness_fn in ["kl", "mse"]:
                 for k, v in inputs.items():
                     inputs[k] = v.to(device)
                 self.target_logits.append(model(inputs).logits.cpu())
@@ -589,96 +604,40 @@ class StructuredEvoSearch:
                     offspring[attn_decr_id*2 + group_index * group_size] -= 1
                     offspring[attn_incr_id*2 + group_index * group_size] += 1
                     offspring[mlp_decr_id*2 + group_index * group_size + 1] -= 1
-                    offspring[mlp_incr_id*2 + group_index * group_size + 1] += 1
+                    offspring[mlp_incr_id*2 + group_index * group_size + 1] += 1    
                 else:
                     # Group to decrease
                     while True:
                         group_decr_id = random.randint(0, group_num - 1)
-                        layer_name = layer_names[group_decr_id * group_size]
-                        level = offspring[group_decr_id * group_size]
-                        if level - 1 < 0:
+                        layer_names = layer_names[group_decr_id * group_size : (group_decr_id+1) * group_size]
+                        levels = offspring[group_decr_id * group_size : (group_decr_id+1) * group_size]
+                        if min(levels) - 1 < 0:
                             continue
-                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level - 1)]}.pt")
-                        if  os.path.exists(weight_):
-                            break
+                        for layer_name, level in zip(layer_names, levels):
+                            weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level - 1)]}.pt")
+                            if  not os.path.exists(weight_):
+                                continue
+                        break
                         # if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
                         #     break 
                     # Group to increase
                     while True:
                         group_incr_id = random.randint(0, group_num - 1)
-                        layer_name = layer_names[group_incr_id * group_size]
-                        level = offspring[group_incr_id * group_size]
-                        if level + 1 > max_level:
+                        layer_names = layer_names[group_incr_id * group_size : (group_incr_id+1) * group_size]
+                        levels = offspring[ group_incr_id * group_size : (group_incr_id+1) * group_size]
+                        if max(levels) + 1 > max_level:
                             continue
-                        weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level + 1)]}.pt")
-                        if  os.path.exists(weight_):
-                            break
+                        for layer_name, level in zip(layer_names, levels):
+                            weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level + 1)]}.pt")
+                            if  not os.path.exists(weight_):
+                                continue
+                        break
                         # if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
                         #     break
                     for i in range(group_size):
-
                         offspring[group_decr_id * group_size + i] -= 1
                         offspring[group_incr_id * group_size + i] += 1
 
-                # # positions where sparsity of attn can be decreased
-                # while True:
-                #     attn_decr_id = random.randint(0, len(offspring)/2 - 1)
-                #     layer_name = layer_names[attn_decr_id*2]
-                #     level = offspring[attn_decr_id*2]
-                #     if level - 1 < 0:
-                #         continue
-                #     # print(f"Try to reduce {layer_name} to level {level - 1}....")
-                #     # print(f"The sparsity is {self.db.level2attn_sparsity[str(level - 1)]}.")
-                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
-                #     if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                #         break 
-                # # positions where sparsity of mlp can be decreased
-                # while True:
-                #     mlp_decr_id = random.randint(0, len(offspring)/2 - 1)
-                #     layer_name = layer_names[mlp_decr_id*2 + 1]
-                #     level = offspring[mlp_decr_id*2 + 1]
-                #     if level - 1 < 0:
-                #         continue
-                #     # print(f"Try to reduce {layer_name} to level {level - 1}....")
-                #     # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level - 1)]}.")
-                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
-
-                #     if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                #         break 
-                # # positions where sparsity of attn can be increased
-                # while True:
-                #     attn_incr_id = random.randint(0, len(offspring)/2 - 1)
-                #     layer_name = layer_names[attn_incr_id*2]
-                #     level = offspring[attn_incr_id*2]
-                #     if level + 1 > max_level:
-                #         continue
-                #     # print(f"Try to increase {layer_name} to level {level + 1}....")
-                #     # print(f"The sparsity is {self.db.level2attn_sparsity[str(level + 1)]}.")
-                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
-                    
-                #     if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
-                #         break
-                # # positions where sparsity of mlp can be increased
-                # while True:
-                #     mlp_incr_id = random.randint(0, len(offspring)/2 - 1)
-                #     layer_name = layer_names[mlp_incr_id*2 + 1]
-                #     level = offspring[mlp_incr_id*2 + 1]
-                #     if level + 1 > max_level:
-                #         continue
-                #     # print(f"Try to reduce {layer_name} to level {level + 1}....")
-                #     # print(f"The sparsity is {self.db.level2mlp_sparsity[str(level + 1)]}.")
-                #     # print(f"The sparsities in db of {layer_name} are {self.db.db[layer_name].keys()}.")
-
-                #     if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
-                #         break
-
-
-
-
-                # offspring[attn_decr_id*2] -= 1
-                # offspring[attn_incr_id*2] += 1
-                # offspring[mlp_decr_id*2 + 1] -= 1
-                # offspring[mlp_incr_id*2 + 1] += 1
             # avoid duplicates
             if offspring in offspring_list:
                 print("Duplicate offsprings")
@@ -698,6 +657,10 @@ class StructuredEvoSearch:
             # if memory_efficient:
             #     return compute_perplexity_layer_per_layer(model, data)
             return compute_perplexity(model, data)
+        elif fitness_fn == "task":
+                 return compute_task_metric(model)
+        elif fitness_fn == "mse":
+            return compute_mse(model, data, target_logits)
         else:
             return compute_kl_div(model, data, target_logits)
             return NotImplementedError
@@ -727,6 +690,7 @@ class StructuredEvoSearch:
                 time, sparsity, level = lines[i].strip().split(' ')
                 attention[sparsity] = float(time)
                 self.level2attn_sparsity[level] = sparsity
+                self.attnlevel2sparsity[sparsity] = level
                 i += 1
             fc = {}
             i += 1
@@ -734,6 +698,7 @@ class StructuredEvoSearch:
                 time, sparsity, level = lines[i].strip().split(' ')
                 fc[sparsity] = float(time)
                 self.level2mlp_sparsity[level] = sparsity
+                self.mlplevel2sparsity[sparsity] = level
                 i += 1
         timings = {}
         # for name in self.db:
@@ -744,42 +709,47 @@ class StructuredEvoSearch:
         return baselinetime, prunabletime, timings
 
     def selection(self, model, parent, offspring_list,
-                  layer_names, survivors_per_selection=[8, 4, 2, 1], samples_per_selection=[2, 4, 8, 16], fitness_fn="ppl",
-                    add_parent_to_last_selection=True):
+                  layer_names, survivors_per_selection=[4, 2, 1], samples_per_selection=[2, 4, 8,], fitness_fn="ppl",
+                    add_parent_to_last_selection=False):
         
-        # self.db.load_level_layers(model, layer_names, parent)
-        self.load_weight(model, layer_names, parent, self.weight_path)
-        for num_survive, num_sample in zip(survivors_per_selection, samples_per_selection):
-            # If specified, add parent to last_selection if not present
-            if add_parent_to_last_selection:
-                if parent not in offspring_list:
-                    offspring_list.append(parent)
-
-            target_logits_minibatch = None
-            # if fitness_fn == "kl":
-            #     target_logits_minibatch = [target_logits[i] for i in minibatch_ids]
+        if fitness_fn == "task":
             fitnesses = []
-
-            # data = []
-            # for inputs in calibration_dataloader:
-            #     for k, v in inputs.items():
-            #         inputs[k] = v.to(device)
-            #     data.append(inputs)
-
-            # data_idx = random.sample(range(len(self.data)), num_sample)
-            # data = [self.data[idx] for idx in data_idx]
-            data = self.data[:num_sample]
-            target_logits_minibatch = self.target_logits[:num_sample]
             for i, candidate in enumerate(offspring_list):
                 # self.db.load_level_layers(model, layer_names, candidate)
                 self.load_weight(model, layer_names, candidate, self.weight_path)
-                fitness = self.compute_fitness(model, data, fitness_fn, target_logits_minibatch)
+                fitness = self.compute_fitness(model, None, fitness_fn, None)
+                fitness += sum(candidate[:4]) / 10
                 fitnesses.append(fitness)
                 print(f"Candidate {i} is evaluated.")
             # Keep only best
-            best_ids = np.argsort(fitnesses)[:num_survive]
-            offspring_list, train_fitnesses = [offspring_list[i] for i in best_ids], [fitnesses[i] for i in best_ids]
-            # In the end we have lists with single element
+            best_ids = np.argsort(fitnesses)[-1]
+            offspring_list, train_fitnesses = [offspring_list[best_ids]], [fitnesses[best_ids]]
+        else:
+            for num_survive, num_sample in zip(survivors_per_selection, samples_per_selection):
+                # If specified, add parent to last_selection if not present
+                if add_parent_to_last_selection:
+                    if parent not in offspring_list:
+                        offspring_list.append(parent)
+
+                target_logits_minibatch = None
+                fitnesses = []
+
+                data = self.data[:num_sample]
+                target_logits_minibatch = self.target_logits[:num_sample]
+                for i, candidate in enumerate(offspring_list):
+                    # self.db.load_level_layers(model, layer_names, candidate)
+                    self.load_weight(model, layer_names, candidate, self.weight_path)
+                    
+                    # ppl +  sparsity regularizer
+                    fitness = self.compute_fitness(model, data, fitness_fn, target_logits_minibatch)
+                    for j, level in enumerate(candidate):
+                        fitness += candidate[j] * (torch.exp(torch.tensor(-1 * j))).item() * 0.2 # TODO: Choose the best sparsity regularizer 
+                    fitnesses.append(fitness)
+                    print(f"Candidate {i} is evaluated.")
+                # Keep only best
+                best_ids = np.argsort(fitnesses)[:num_survive]
+                offspring_list, train_fitnesses = [offspring_list[i] for i in best_ids], [fitnesses[i] for i in best_ids]
+                # In the end we have lists with single element
         train_fitness = train_fitnesses[0]
         parent = offspring_list[0]
         return parent, train_fitness
@@ -1018,11 +988,14 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     #     fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
     #     attname='self_attn.o_proj',
     #     fcname='mlp.down_proj')
-
+    # return
     model = _get_model(module)()
     # db = StructDatabase(db_file, model)
 
+    weight_path_ori = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/prune_with_fine_edu_20kcali_2x"
     weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/prune_with_fine_edu_20kcali_2x"
+    # weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/gradual_prune_from_1.5x"
+    # weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/2.5x_gradual_from_2_reg"
     # db_ = db.db
     # for name in db_:
     #     layer_dir = os.path.join(weight_path, name)
@@ -1056,12 +1029,10 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     # baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
     module.to("cuda:1")
     layer_names = []
-    layer_list = os.listdir(weight_path)
+    layer_list = os.listdir(weight_path_ori)
     for i in range(int(len(layer_list)/2)):
         layer_names.append(f"model.model.layers.{i}.self_attn.o_proj")
         layer_names.append(f"model.model.layers.{i}.mlp.down_proj")
-    print(layer_names)
-    return
     module.state = [None] * len(layer_names)
     # print(f"attn level2sparsity dict: {db.level2attn_sparsity}")
     # print(f"mlp level2sparsity dict: {db.level2mlp_sparsity}")
@@ -1069,10 +1040,18 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     # for name in db.db:
     #     layer_names.append(name)
     #     print(name)
+    
+    
+    
+    # # 1.5x acceleration
+    # parent = [3 for _ in layer_names]
     # 2x acceleration
-    # parent = [5 for _ in layer_names]
+    parent = [5 for _ in layer_names]
     # 2.5x acceleration
-    parent = [6 for _ in layer_names]
+    # parent = [6 for _ in layer_names]
+
+    # 2.5 reg from 2.0x
+    # new_parent = [3, 3, 0, 0, 5, 6, 4, 3, 4, 4, 5, 4, 4, 3, 3, 5, 3, 5, 4, 4, 5, 4, 4, 3, 5, 6, 4, 6, 7, 6, 8, 6, 1, 3, 4, 3, 5, 4, 6, 6, 7, 7, 7, 7, 6, 7, 8, 7, 5, 5, 6, 5, 3, 7, 10, 7, 7, 6, 8, 6, 5, 6, 4, 6]
     calib_loader = _dataloader_builder(dataloader,
                                     batchsize=1,
                                     nsamples=64, # Please adjust this number for efficiency
@@ -1081,60 +1060,87 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
                                             calibration_dataloader=calib_loader, fitness_fn="ppl")
     struct_evo_search.get_berttimings(timings_file)
     
-    # struct_evo_search.load_weight(module, layer_names, parent, weight_path)
+    # new_parent = []
+    # for i, name in enumerate(layer_names):
+    #     if os.path.exists(os.path.join(weight_path, name)):
+    #         sparsity_list = os.listdir(os.path.join(weight_path, name))
+    #         sparsities = []
+    #         for sparsity in sparsity_list:
+    #             sparsities.append(float(sparsity[:-3]))
+    #         min_sparsities = min(sparsities)
+    #         if min_sparsities == 0:
+    #             new_parent.append(0)
+    #             continue
+    #         if i % 2 == 0:
+    #             level = struct_evo_search.attnlevel2sparsity["%.4f" % min_sparsities]
+    #         else:
+    #             level = struct_evo_search.mlplevel2sparsity["%.4f" % min_sparsities]
+    #         new_parent.append(int(level))
+    #     else:
+    #         new_parent.append(10)
+
+    # module.state = copy.deepcopy(new_parent)
+    
+    # resdual = sum(parent) - sum(new_parent)
+    # for _ in range(resdual):
+    #     while True:
+    #         idx = random.randint(0, len(parent) - 1)
+    #         if new_parent[idx] + 1 > 10:
+    #             continue
+    #         else:
+    #             new_parent[idx] += 1
+    #             break
+    
+    # parent = new_parent
+
+
+    # print("New parent: ", new_parent)
+    # parent=[0, 3, 3, 6, 6, 3, 3, 0, 0, 5, 3, 1, 4, 3, 5, 3, 3, 5, 6, 8, 9, 3, 6, 8, 6, 6, 6, 6, 6, 6, 6, 6, 5, 8, 8, 8, 7, 6, 8, 6, 5, 10, 6, 7, 8, 4, 9, 7, 6, 10, 8, 9, 8, 5, 10, 8, 4, 10, 10, 8, 8, 6, 10, 8] 
+    # manual= [4, 8, 5, 3, 4, 3, 5, 4, 4, 5, 5, 4, 8, 5, 5, 3, 4, 5, 5, 3, 5, 6, 5, 6, 5, 7, 5, 8, 8, 7, 9, 6, 2, 6, 5, 5, 6, 7, 8, 3, 6, 7, 9, 8, 8, 6, 10, 7, 4, 9, 6, 6, 6, 6, 10, 9, 7, 7, 7, 6, 6, 6, 5, 6]
+    # manual = [3, 3, 0, 0, 5, 6, 4, 3, 4, 4, 5, 4, 4, 3, 3, 5, 3, 5, 4, 4, 5, 4, 4, 3, 5, 6, 4, 6, 7, 6, 8, 6, 1, 3, 4, 3, 5, 4, 6, 6, 7, 7, 7, 7, 6, 7, 8, 7, 5, 5, 6, 5, 3, 7, 10, 7, 7, 6, 8, 6, 5, 6, 4, 6]
+    # manual = parent
+    # manual[0] = 0
+    # manual[1] = 0
+    # manual[2] = 0
+    # manual[3] = 0
+
+    # struct_evo_search.load_weight(module, layer_names, manual, weight_path)
     # return
-    # db.load_level_layers(module, layer_names, parent)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
-    # print("parent ppl is: ", parent_ppl)
-
-    # first_layer_rc = copy.deepcopy(parent)
-    # first_layer_rc[0] = 0
-    # first_layer_rc[1] = 0
-    # db.load_level_layers(module, layer_names, first_layer_rc)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
-    # print("first layer ppl is: ", parent_ppl)
-
-    # last_layer_rc = copy.deepcopy(parent)
-    # last_layer_rc[2] = 0
-    # last_layer_rc[3] = 0
-    # db.load_level_layers(module, layer_names, last_layer_rc)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
-    # print("2nd layer ppl is: ", parent_ppl)
-
-    # last_layer_rc = copy.deepcopy(parent)
-    # last_layer_rc[4] = 0
-    # last_layer_rc[5] = 0
-    # db.load_level_layers(module, layer_names, last_layer_rc)
-    # parent_ppl = struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "kl", struct_evo_search.target_logits[:64])
-    # print("3rd layer ppl is: ", parent_ppl)
-
+    # struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "task", struct_evo_search.target_logits[:64])
+    # return
     # target_logits = []
 
 
 
     group_num = 0
-    generation_number = 30
+    generation_number = 200
     within_group = False
     group_index = 0
     offspring_num = 16
     for generation in range(generation_number):
-        if generation < 10:
-            group_num = 4
-        elif generation < 30:
+        # if generation < 10:
+        #     group_num = 4
+        
+        if generation < 30:
             group_num = 8
-        elif generation < 50:
-            group_num = 16
-        elif generation < 100:
+        elif generation < 200:
             offspring_num = 8
             group_num = 8
             within_group = True
-            # group_index = 0
-            group_index = (generation - 50) % group_num
-        # else:
-        #     group_num = 16
+            group_index = (generation - 30) % group_num
+        
+        # elif generation < 150:
+        #     group_num = 1
+        #     offspring_num = 16
         #     within_group = True
-        #     # group_index = 0
-        #     group_index = (generation - 70) % group_num
+        #     group_index=0
+        
+        # else:
+        # group_num = 16
+        # offspring_num = 8
+        # within_group = True
+        # group_index = 0
+        # group_index = (generation - 0) % group_num
 
         print(f"Generation {generation + 1}/{generation_number}")
         if within_group:
@@ -1151,6 +1157,7 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
             model=module,
             parent=parent,
             offspring_list=offspring_list, 
+            fitness_fn="ppl",
         layer_names=layer_names)
         print(f"Selection of generation {generation + 1} is over.")
         print(f"Best fitness value of generation {generation + 1} is {train_fitness}")
@@ -1160,22 +1167,7 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     print("The final child is: ")
     print(parent)
     struct_evo_search.load_weight(module, layer_names, parent, weight_path)
-    # struct_spdy = StructuredSPDY(
-    #     target, db, errors, baselinetime, prunabletime, timings,
-    #     module, _run_llama,
-    #     _dataloader_builder(
-    #         dataloader,
-    #         batchsize=loader_batchsize,
-    #         nsamples=256, # Please adjust this number for efficiency
-    #     ),
-    # )
-
-    # profile = f'profile_{target}_{run_name}.txt'
-    # struct_spdy.search(profile)
-    # db.load_file(module, profile)
-    # For flexibility, the weights are saved as full matrix, please do shrinking when you need.
-    # shrink(module)
-    # os.remove(db_file)
+    return
 
 @torch.no_grad()
 def load_pruned_model(module, db_file, profile):

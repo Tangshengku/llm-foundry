@@ -10,8 +10,8 @@ from typing import Any, Optional, Union
 
 import torch
 import torch.distributed
-from composer import ComposerModel, Trainer
 from transformers import AutoModelForCausalLM
+from composer import ComposerModel, Trainer
 from composer.core.callback import Callback
 from composer.profiler import (
     JSONTraceHandler,
@@ -481,24 +481,26 @@ def train(cfg: DictConfig) -> Trainer:
             eval_gauntlet_config,
         )
     # Build Model
+
     from_pretrained_old = AutoModelForCausalLM.from_pretrained
     # Define new init
     def from_pretrained_overriden(*args, **kwargs):
         model = from_pretrained_old(*args, **kwargs)
-        # # load sparse checkpoint
-        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.0x/model_2x_mannul.pt", map_location='cpu')
-        # # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/shearedllama_pruned_2.7B_fineweb/ep5-ba20000-rank0_hf/pytorch_model.bin")
-        # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
-        #     state, prefix='model.')
-        # model.load_state_dict(state)
-        # shrink(model=model, is_transformers=True)
+        # load sparse checkpoint
+        # model.load_state_dict(sparse_model.model.state_dict())
+        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.0x/model_2x_mannul.pt", map_location="cpu")
+        torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+            state, prefix='model.')
+        model.load_state_dict(state)
+        shrink(model=model, is_transformers=True)
+        print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
 
-        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/evo_search_2x_reg_0.4B/ep0-ba800-rank0_hf/pytorch_model.bin", map_location="cpu")
-        # # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
-        # #     state, prefix='model.')
-        # model.load_state_dict(state)
-        # # shrink(model=model, is_transformers=True)
-        # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.5x_gradual/model_2.5x_mannul.pt", map_location="cpu")
+        torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+            state, prefix='model.')
+        model.load_state_dict(state)
+        shrink(model=model, is_transformers=True)
+        print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
         return model
 
     # Override init
@@ -509,7 +511,7 @@ def train(cfg: DictConfig) -> Trainer:
     assert isinstance(name, str)
     assert isinstance(model_config, dict)
     model = build_composer_model(
-       name=name,
+        name=name,
         tokenizer=tokenizer,
         init_context=init_context,
         master_weights_dtype=model_config.pop('master_weights_dtype', None),
@@ -568,7 +570,7 @@ def train(cfg: DictConfig) -> Trainer:
         # So, a compromised solution is to save the pruned weights locally
         # Please uncomment this if you want to save the weight locally
         torch.save(model.state_dict(), \
-                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_2.0x_aux_mmlu/model_2x.pt")
+                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search/model.pt")
         return
     
     # Load the weight of pruned model
@@ -704,7 +706,7 @@ def train(cfg: DictConfig) -> Trainer:
     return trainer
 
 
-def train_from_yaml(
+def train_from_yaml_sparse(
     yaml_path: str,
     args_list: Optional[list[str]] = None,
 ) -> Trainer:
