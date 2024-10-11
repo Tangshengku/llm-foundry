@@ -488,19 +488,43 @@ def train(cfg: DictConfig) -> Trainer:
         model = from_pretrained_old(*args, **kwargs)
         # load sparse checkpoint
         # model.load_state_dict(sparse_model.model.state_dict())
-        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.0x/model_2x_mannul.pt", map_location="cpu")
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_idx_sparsity_reg_final/model_2x.pt", map_location="cpu")
+        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/llama_3_1_8b_evo_search_attn_prune_each_head_/model_1.5x.pt", map_location="cpu")
         torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
             state, prefix='model.')
+        model.load_state_dict(state)
+        shrink(model=model, is_transformers=True, kv_ignore=True)
+        print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+
+        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/evo_search_llama3.1_8b_1.5x_finetune/ep0-ba800-rank0_hf/pytorch_model.bin", map_location="cpu")
+        # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+        #     state, prefix='model.')
         model.load_state_dict(state)
         shrink(model=model, is_transformers=True)
         print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
 
-        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.5x_gradual/model_2.5x_mannul.pt", map_location="cpu")
+        state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/llama_3_1_8b_evo_search_attn_prune_each_head_from_1.5x/model_2x.pt", map_location='cpu')
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/shearedllama_pruned_2.7B_fineweb/ep5-ba20000-rank0_hf/pytorch_model.bin")
         torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
             state, prefix='model.')
         model.load_state_dict(state)
-        shrink(model=model, is_transformers=True)
-        print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+        print("The pruned weight is loaded! Ready to eval.")
+        shrink(model, is_transformers=True, kv_ignore=True)
+        print("model is shrinked Again. The remaining parameters are {}".format(get_parameter_number(model)))
+
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_2.5x_idx+sparsity_reg_final/model_2.5x.pt", map_location="cpu")
+        # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+        #     state, prefix='model.')
+        # model.load_state_dict(state)
+        # shrink(model=model, is_transformers=True)
+        # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.5x_gradual/model_2.5x_mannul.pt", map_location="cpu")
+        # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
+        #     state, prefix='model.')
+        # model.load_state_dict(state)
+        # shrink(model=model, is_transformers=True)
+        # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
         return model
 
     # Override init

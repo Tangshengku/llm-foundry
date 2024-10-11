@@ -19,14 +19,14 @@ max_seq_len: 4096
 model:
   name: hf_causal_lm
   # Pruned Model of Shearedllama without Finetuning
-  # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
+  pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   
   # Zipllm 1.5x model with FineTuning
   # pretrained_model_name_or_path: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
   
   # pretrained_model_name_or_path: princeton-nlp/Sheared-LLaMA-2.7B Shengkun/LLama2-7B-Structural-Prune-2.5x princeton-nlp/Sheared-LLaMA-2.7B-Pruned
   pretrained: true
-  pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
+  # pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
   # pretrained_model_name_or_path: Shengkun/evo_search_2x
   # init_device: meta
   use_auth_token: true
@@ -35,8 +35,8 @@ model:
 # Tokenizer
 tokenizer:
   # name: Shengkun/LLama2-7B-Structural-Prune-1.5x-32-20kCalib
-  # name: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
-  name: meta-llama/Llama-2-7b-hf
+  name: princeton-nlp/Sheared-LLaMA-2.7B-Pruned
+  # name: meta-llama/Llama-2-7b-hf
   # name: /nfs/scistore19/alistgrp/stang/llm-foundry/scripts/evo_search_1.5_0.2B/ep0-ba600-rank0_hf
   # name: Shengkun/evo_search_2x
   kwargs:

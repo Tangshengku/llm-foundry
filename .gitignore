@@ -169,3 +169,4 @@ srun_logs/
 tmp_data/
 evo_search*/
 weights/
+shearedllama_2.7B_fineweb_20B/

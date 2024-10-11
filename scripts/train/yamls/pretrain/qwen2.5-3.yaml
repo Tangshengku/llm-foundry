@@ -4,17 +4,17 @@ variables:
   tokenizer_name: facebook/opt-2.7b
   global_seed: 17
 
-max_seq_len: 8192
+max_seq_len: 4096
 # Run Name
 run_name:  # If left blank, will be read from env var $RUN_NAME
-timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/Llama3.1-8b-A6000_flash_kv_ignore.txt
+timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/Qwen-3b-A6000_flash.txt
 
 max_split_size_mb: 512
 # Model
 model:
   name: hf_causal_lm
   # pretrained_model_name_or_path: meta-llama/Meta-Llama-3-8B
-  pretrained_model_name_or_path: meta-llama/Meta-Llama-3.1-8B
+  pretrained_model_name_or_path: Qwen/Qwen2.5-3B
 
   pretrained: true
   # init_device: meta
@@ -24,7 +24,7 @@ model:
 # Tokenizer
 tokenizer:
   # name: meta-llama/Meta-Llama-3-8B
-  name: meta-llama/Meta-Llama-3.1-8B
+  name: Qwen/Qwen2.5-3B
   kwargs:
     model_max_length: ${max_seq_len}
 
@@ -34,15 +34,15 @@ train_loader:
   dataset:
     # local: ${data_local}
     streams:
-      finewebedu100bt:
-          local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finedwebedu_100B_llama3.1
-          split: train
+      # finewebedu100bt:
+      #     local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finewebedu_100B/sample-100BT
+      #     split: train
       # finewebedu10bt:
       #     local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finewebedu/sample-10BT
       #     split: train
-      # aux_mmlu:
-      #     local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/aux_mmlu/auxiliary_train
-      #     split: train
+      aux_mmlu:
+          local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/aux_mmlu/auxiliary_train
+          split: train
     shuffle: true
     max_seq_len: ${max_seq_len}
     shuffle_seed: ${variables.global_seed}
@@ -66,12 +66,12 @@ train_loader:
 # Optimization
 scheduler:
   name: cosine_with_warmup
-  t_warmup: 10ba
+  t_warmup: 100ba
   alpha_f: 0.1
 
 optimizer:
   name: decoupled_adamw
-  lr: 1e-4
+  lr: 1.0e-4
   betas:
   - 0.9
   - 0.95
@@ -83,17 +83,17 @@ algorithms:
     clipping_type: norm
     clipping_threshold: 1.0
 
-max_duration: 600ba  # ~ 2.5B tokens
+max_duration: 4800ba  # ~ 2.5B tokens
 eval_interval: 500ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 2304
+global_train_batch_size: 1
 
 # System
 seed: ${variables.global_seed}
 device_eval_batch_size: 16
-# device_train_microbatch_size: 64
-device_train_microbatch_size: 2
+device_train_microbatch_size: 64
+# device_train_microbatch_size: auto
 precision: amp_bf16
 
 # FSDP
@@ -121,7 +121,7 @@ callbacks:
 #   wandb: {}
 
 # Checkpoint to local filesystem or remote object store
-save_interval: 60ba
+# save_interval: 500ba
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
 # save_folder: ./{run_name}/checkpoints
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints

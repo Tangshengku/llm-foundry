@@ -486,18 +486,20 @@ def train(cfg: DictConfig) -> Trainer:
     def from_pretrained_overriden(*args, **kwargs):
         model = from_pretrained_old(*args, **kwargs)
         # # load sparse checkpoint
-        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_reg_2.0x/model_2x_mannul.pt", map_location='cpu')
-        # # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/shearedllama_pruned_2.7B_fineweb/ep5-ba20000-rank0_hf/pytorch_model.bin")
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/llama_3_1_8b_evo_search_attn_prune_each_head_/model_1.5x.pt", map_location='cpu')
+        # # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_idx_sparsity_reg_final/model_2x.pt")
         # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
         #     state, prefix='model.')
         # model.load_state_dict(state)
-        # shrink(model=model, is_transformers=True)
-
-        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/evo_search_2x_reg_0.4B/ep0-ba800-rank0_hf/pytorch_model.bin", map_location="cpu")
+        # shrink(model=model, is_transformers=True, kv_ignore=True)
+        # # shrink(model=model, is_transformers=True)
+        
+        # # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_2.5x_idx+sparsity_reg_final/model_2.5x.pt", map_location="cpu")
+        # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/srun_logs/evo_search_llama3.1_8b_1.5x_finetune/ep0-ba800-rank0_hf/pytorch_model.bin", map_location="cpu")
         # # torch.nn.modules.utils.consume_prefix_in_state_dict_if_present(
         # #     state, prefix='model.')
         # model.load_state_dict(state)
-        # # shrink(model=model, is_transformers=True)
+        # shrink(model=model, is_transformers=True, kv_ignore=True)
         # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
         return model
 
@@ -527,9 +529,9 @@ def train(cfg: DictConfig) -> Trainer:
             master_weights_dtype=teacher_config.get('master_weights_dtype', None),)
         teacher.eval()
     
-    print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
-    shrink(model=model)
-    print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
+    # print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
+    # shrink(model=model)
+    # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
     # load_pruned_model(module=model, 
     #                   db_file="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database_prune_with_fine_edu_20kcali_2x.db",
     #                   profile="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/profile_2.0_prune_with_fine_edu_20kcali_2x_4_layers.txt")
@@ -567,8 +569,11 @@ def train(cfg: DictConfig) -> Trainer:
         # For gradual pruning, the weight might not be pushed to huggingface directly
         # So, a compromised solution is to save the pruned weights locally
         # Please uncomment this if you want to save the weight locally
+        save_path = f"/nfs/scistore19/alistgrp/stang/llm-foundry/weights/{run_name}"
+        if not os.path.exists(save_path):
+            os.mkdir(save_path)
         torch.save(model.state_dict(), \
-                   "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/evo_search_2.0x_aux_mmlu/model_2x.pt")
+                   f"/nfs/scistore19/alistgrp/stang/llm-foundry/weights/{run_name}/model_1.5x.pt")
         return
     
     # Load the weight of pruned model

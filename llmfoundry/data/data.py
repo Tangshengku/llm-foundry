@@ -162,6 +162,10 @@ def finewebedu(sample):
         return sample['text']
     else:
         return None
+def slimPajama(sample):
+    return sample['text']
+def refinedweb(sample):
+    return sample['content']
 
 
 CONVERT_TO_PRETRAINING = {
@@ -229,6 +233,8 @@ CONVERT_TO_PRETRAINING = {
 
     "/network/eldar/datasets/raw/fineweb-edu/data": finewebedu,
     "HuggingFaceFW/fineweb-edu": finewebedu,
+    "cerebras/SlimPajama-627B": slimPajama,
+    "tiiuae/falcon-refinedweb": refinedweb
 }
 __all__ = [
     'AbstractConcatTokensDataset',

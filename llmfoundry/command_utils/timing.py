@@ -100,7 +100,6 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
     print("base")
     t_mean, t_std = benchmark_foo(lambda: model(sample_inputs), repetitions=repetitions)
     print(f"{t_mean/db_downscale:.4f}")
-    return
 
     # === benchmark prunable parts ===
     print("prunable")
@@ -114,6 +113,7 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
                 for m in mlist:
                      m(*x)
             return run
+        # t_mean, t_std = benchmark_foo(lambda: prunable[0](*cached_inputs_outputs[prunable_dict_key + "_inputs"]), repetitions=repetitions)
         t_mean, t_std = benchmark_foo(fw_modulelist(prunable, cached_inputs_outputs[prunable_dict_key + "_inputs"]), repetitions=repetitions)
     print(f"{t_mean/db_downscale:.4f}")
 
@@ -129,7 +129,7 @@ def timing_main(model, device, data_loader, is_bert=True, debug=False, with_attn
     print("attention")
     for pruned_heads_idx in range(0, num_heads):
         pruned_attn = deepcopy(attn_layer)
-        pruned_attn.prune_heads(list(range(pruned_heads_idx)))
+        pruned_attn.prune_heads(list(range(pruned_heads_idx)), kv_ignore=True)
 
         if with_attn_cache:
             _batchsize = sample_inputs['input_ids'].shape[0]
