@@ -482,7 +482,7 @@ def train(cfg: DictConfig) -> Trainer:
         )
     # Build Model
     from_pretrained_old = AutoModelForCausalLM.from_pretrained
-    # Define new init
+    # Define new init 
     def from_pretrained_overriden(*args, **kwargs):
         model = from_pretrained_old(*args, **kwargs)
         # # load sparse checkpoint
@@ -529,15 +529,6 @@ def train(cfg: DictConfig) -> Trainer:
             master_weights_dtype=teacher_config.get('master_weights_dtype', None),)
         teacher.eval()
     
-    # print("Model parameters before shrinking: {}".format(get_parameter_number(model)))
-    # shrink(model=model)
-    # print("Model parameters after shrinking: {}".format(get_parameter_number(model)))
-    # load_pruned_model(module=model, 
-    #                   db_file="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database_prune_with_fine_edu_20kcali_2x.db",
-    #                   profile="/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/profile_2.0_prune_with_fine_edu_20kcali_2x_4_layers.txt")
-    # torch.save(model.state_dict(), \
-    #                "/nfs/scistore19/alistgrp/stang/llm-foundry/weights/2k_fineweb_oneshot_4layers/model.pt")
-    # return
     # Push the Finetuned Weight to Huggingface
     # state = torch.load("/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/llama2-7b-20kcali-1.5x-finetune-30000batch_lr_1e-4_4096_fineweb/ep1-ba30000-rank0.pt")
     # model.load_state_dict(state["state"]["model"])
@@ -573,7 +564,7 @@ def train(cfg: DictConfig) -> Trainer:
         if not os.path.exists(save_path):
             os.mkdir(save_path)
         torch.save(model.state_dict(), \
-                   f"/nfs/scistore19/alistgrp/stang/llm-foundry/weights/{run_name}/model_1.5x.pt")
+                   f"/nfs/scistore19/alistgrp/stang/llm-foundry/weights/{run_name}/model.pt")
         return
     
     # Load the weight of pruned model

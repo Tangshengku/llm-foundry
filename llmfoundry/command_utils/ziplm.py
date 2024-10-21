@@ -31,6 +31,7 @@ class NoAttention(Module):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
     ):
         return (hidden_states, None, None)
@@ -64,11 +65,6 @@ def shrink(model, update_mask=False, is_transformers=False, kv_ignore=False):
                     mask_ = (~mask.unsqueeze(1)) * torch.ones_like(weight.t(), device=mask.device).reshape(
                             (-1, weight.shape[0] * layer.attn.head_size)) 
                     mask_ = mask_.reshape(-1, weight.shape[0])
-                    # mask_ = torch.ones_like(mask_, device=mask_.device)
-                    # layer.self_attn.o_proj.mask = mask_.t()
-                    # layer.self_attn.in_proj_linear_q.mask = mask_
-                    # layer.self_attn.in_proj_linear_k.mask = mask_
-                    # layer.self_attn.in_proj_linear_v.mask = mask_
 
                     layer.self_attn.o_proj.register_buffer("mask", mask_.t(), persistent=False)
                     layer.self_attn.in_proj_linear_q.register_buffer("mask", mask_, persistent=False)
@@ -251,7 +247,8 @@ def gen_transformerdb(
     dataloader_passes=1,
     sparsities=[], min_sparsity=0, max_sparsity=.99, delta_sparse=.1,
     headcount=12, headsize=64, fcdim=4*768,
-    attname='attention.output.dense', fcname='output.dense', run_name=""
+    attname='attention.output.dense', fcname='output.dense', 
+    run_name="", save_as_db=False,
 ):
     modelp = get_model()
     modeld = get_model()
@@ -269,9 +266,6 @@ def gen_transformerdb(
 
     ziplm = {}
     for i, name in enumerate(layersp):
-        # if fcname not in name:
-        #     continue
-        # print(name)
         if fcname in name or attname in name:
             layer = layersp[name]
             if i < len(layersp)/2:
@@ -325,18 +319,19 @@ def gen_transformerdb(
             Ws = None
             torch.cuda.empty_cache()
         ziplm[name].free()
-
-    # torch.save(db, filename)
-    weight_path=f"/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/{run_name}"
-    if not os.path.exists(weight_path):
-        os.mkdir(weight_path)
-    for name in db:
-        layer_dir = os.path.join(weight_path, name)
-        if not os.path.exists(layer_dir):
-            os.mkdir(layer_dir)
-        for sparsity in list(db[name].keys()):
-            torch.save(db[name][sparsity], f"{layer_dir}/{sparsity}.pt")
-        torch.save(torch.zeros_like(db[name][sparsity]).cpu(), f"{layer_dir}/1.0000.pt")
+    if save_as_db:
+        torch.save(db, filename)
+    else:
+        weight_path=f"/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/{run_name}"
+        if not os.path.exists(weight_path):
+            os.mkdir(weight_path)
+        for name in db:
+            layer_dir = os.path.join(weight_path, name)
+            if not os.path.exists(layer_dir):
+                os.mkdir(layer_dir)
+            for sparsity in list(db[name].keys()):
+                torch.save(db[name][sparsity], f"{layer_dir}/{sparsity}.pt")
+            torch.save(torch.zeros_like(db[name][sparsity]).cpu(), f"{layer_dir}/1.0000.pt")
 
 class StructuredSPDY:
     def __init__(
@@ -432,7 +427,7 @@ class StructuredSPDY:
             self.layers[i]: self.sparsities[i][solution[i]] for i in range(len(self.layers))
         }
         self.db.stitch(layers, config)
-        shrink(model)
+        shrink(model, kv_ignore=True)
         return model
 
     @torch.no_grad()
@@ -490,7 +485,7 @@ class StructuredSPDY:
             self.save_profile(coefs, save)
 
     def search(
-        self, save='', randinits=100, searchsteps=500, muteprob=.1
+        self, save='', randinits=100, searchsteps=200, muteprob=.1
     ):
         print('Random inits ...')
         candidates = []
@@ -521,8 +516,7 @@ class StructuredSPDY:
             self.save_profile(coefs, save)
 
 class StructuredEvoSearch:
-    def __init__(self, model, db, calibration_dataloader, weight_path=None, fitness_fn="ppl") -> None:
-        self.db = db
+    def __init__(self, model, calibration_dataloader, weight_path=None, fitness_fn="ppl") -> None:
         self.data = []
         self.weight_path=weight_path
         self.level2attn_sparsity = dict()
@@ -531,7 +525,8 @@ class StructuredEvoSearch:
         self.mlplevel2sparsity = dict()
         self.target_logits = []
         device = next(model.parameters()).device
-        for inputs in calibration_dataloader:
+       
+        for inputs in enumerate(calibration_dataloader):
             self.data.append(inputs)
             if fitness_fn in ["kl", "mse"]:
                 for k, v in inputs.items():
@@ -554,8 +549,8 @@ class StructuredEvoSearch:
             # mutate offspring
             num_flips = min(random.randint(1, int(group_size/2)), random.randint(1, int(group_size/2)))  # bias towards lower values
             for _ in range(num_flips):
-                
                 if within_group:
+                    
                     # positions where sparsity of attn can be decreased
                     while True:
                         attn_decr_id = random.randint(0, len(offspring)/ (2 * group_num) - 1)
@@ -567,8 +562,6 @@ class StructuredEvoSearch:
                         if os.path.exists(weight_):
                             break
 
-                        # if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                        #     break 
                     # positions where sparsity of mlp can be decreased
                     while True:
                         mlp_decr_id = random.randint(0, len(offspring)/(2 * group_num) - 1)
@@ -579,8 +572,7 @@ class StructuredEvoSearch:
                         weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2mlp_sparsity[str(level - 1)]}.pt")
                         if  os.path.exists(weight_):
                             break
-                        # if self.db.level2mlp_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                        #     break 
+                    
                     # positions where sparsity of attn can be increased
                     while True:
                         attn_incr_id = random.randint(0, len(offspring)/(2 * group_num) - 1)
@@ -591,8 +583,7 @@ class StructuredEvoSearch:
                         weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2attn_sparsity[str(level + 1)]}.pt")
                         if  os.path.exists(weight_):
                             break
-                        # if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
-                        #     break
+                    
                     # positions where sparsity of mlp can be increased
                     while True:
                         mlp_incr_id = random.randint(0, len(offspring)/(2 * group_num) - 1)
@@ -603,8 +594,6 @@ class StructuredEvoSearch:
                         weight_ = os.path.join(self.weight_path, layer_name, f"{self.level2mlp_sparsity[str(level + 1)]}.pt")
                         if  os.path.exists(weight_):
                             break
-                        # if self.db.level2mlp_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
-                        #     break
                     offspring[attn_decr_id*2 + group_index * group_size] -= 1
                     offspring[attn_incr_id*2 + group_index * group_size] += 1
                     offspring[mlp_decr_id*2 + group_index * group_size + 1] -= 1
@@ -622,8 +611,6 @@ class StructuredEvoSearch:
                             if  not os.path.exists(weight_):
                                 continue
                         break
-                        # if self.db.level2attn_sparsity[str(level - 1)] in self.db.db[layer_name].keys():
-                        #     break 
                     # Group to increase
                     while True:
                         group_incr_id = random.randint(0, group_num - 1)
@@ -636,8 +623,6 @@ class StructuredEvoSearch:
                             if  not os.path.exists(weight_):
                                 continue
                         break
-                        # if self.db.level2attn_sparsity[str(level + 1)] in self.db.db[layer_name].keys():
-                        #     break
                     for i in range(group_size):
                         offspring[group_decr_id * group_size + i] -= 1
                         offspring[group_incr_id * group_size + i] += 1
@@ -651,8 +636,6 @@ class StructuredEvoSearch:
                 print("Exceed max deviation")
                 continue
             offspring_list.append(offspring)
-
-
         return offspring_list
     
     def compute_fitness(self, model, data, fitness_fn, target_logits: Optional[torch.Tensor] = None, 
@@ -713,13 +696,12 @@ class StructuredEvoSearch:
         return baselinetime, prunabletime, timings
 
     def selection(self, model, parent, offspring_list,
-                  layer_names, survivors_per_selection=[4, 2, 1], samples_per_selection=[2, 4, 8], fitness_fn="ppl",
+                  layer_names, survivors_per_selection=[4, 2, 1], samples_per_selection=[1, 4, 8], fitness_fn="ppl",
                     add_parent_to_last_selection=False):
         
         if fitness_fn == "task":
             fitnesses = []
             for i, candidate in enumerate(offspring_list):
-                # self.db.load_level_layers(model, layer_names, candidate)
                 self.load_weight(model, layer_names, candidate, self.weight_path)
                 fitness = self.compute_fitness(model, None, fitness_fn, None)
                 fitness += sum(candidate[:4]) / 10
@@ -748,8 +730,9 @@ class StructuredEvoSearch:
                     fitness = self.compute_fitness(model, data, fitness_fn, target_logits_minibatch)
                     for j, level in enumerate(candidate):
                         idx = int(j/ 4) 
-                        # 0.2 For llama2, 0.1 for llama3.1
-                        fitness += candidate[j] * (torch.exp(torch.tensor(-5 * idx))).item() * 0.1 # TODO: Choose the best sparsity regularizer 
+                        # 0.2 For llama2 and llama3.1
+                        # #TODO: better regularizer to adjust to any metrics
+                        fitness += candidate[j] * (torch.exp(torch.tensor(-5 * idx))).item() * 0.2 # TODO: Choose the best sparsity regularizer 
                         fitness += torch.exp(0.5 * torch.tensor(candidate[j])) * 0.01
 
                     fitnesses.append(fitness)
@@ -788,7 +771,7 @@ class StructDatabase:
             # layers[name].bias.data = sd[name + '.bias']
             return
         if isinstance(layers, dict):
-            layers[name].weight.data = self.db[name][config].to(layers[name].weight.device)
+            layers[name].weight.data = self.db[name][config].to(layers[name].weight.dtype).to(layers[name].weight.device)
         else:
             layer = layers.get_submodule(name)
             layer.weight.data = self.db[name][config].to(layer.weight.dtype).to(layer.weight.device)
@@ -845,16 +828,16 @@ class StructDatabase:
             i = 5
             attention = {}
             while ' ' in lines[i]:
-                time, sparsity, level = lines[i].strip().split(' ')
+                time, sparsity = lines[i].strip().split(' ')
                 attention[sparsity] = float(time)
-                self.level2attn_sparsity[level] = sparsity
+                # self.level2attn_sparsity[level] = sparsity
                 i += 1
             fc = {}
             i += 1
             while i < len(lines):
-                time, sparsity, level = lines[i].strip().split(' ')
+                time, sparsity = lines[i].strip().split(' ')
                 fc[sparsity] = float(time)
-                self.level2mlp_sparsity[level] = sparsity
+                # self.level2mlp_sparsity[level] = sparsity
                 i += 1
         timings = {}
         for name in self.db:
@@ -864,7 +847,7 @@ class StructDatabase:
             # timings[name] = fc
         return baselinetime, prunabletime, timings
 
-
+# Applied in ZipLM
 def compute_pnorm(p, db, get_model, dataloader, run, filename):
     modeld = get_model().to("cuda")
     modelp = get_model().to("cuda:1")
@@ -897,60 +880,9 @@ def compute_pnorm(p, db, get_model, dataloader, run, filename):
 def compute_squared(db, get_model, dataloader, run, filename):
     compute_pnorm(2, db, get_model, dataloader, run, filename)
 
-
-# def _dataloader_builder(dataloader, batchsize=16, nsamples=1024):
-#     default_loader = trainer.get_train_dataloader()
-#     template = dict(default_loader.__dict__)
-
-#     # drop attributes that will be auto-initialized
-#     to_drop = [k for k in template if k.startswith("_") or k == "batch_sampler"]
-#     for item in to_drop:
-#         template.pop(item)
-
-#     # shuffle dataset and select nsamples from it
-#     shuffled_dataset = template['dataset'].shuffle(seed=42)
-#     nsamples = len(shuffled_dataset) if nsamples == -1 else nsamples
-#     shuffled_dataset = shuffled_dataset.select(range(nsamples))
-
-#     kwargs = {
-#         'batch_size': batchsize,
-#         'dataset': shuffled_dataset,
-#         'sampler': torch.utils.data.RandomSampler(shuffled_dataset)
-#     }
-#     template.update(kwargs)
-#     data_loader = type(default_loader)(**template)
-
-#     for sample in data_loader:
-#         sample = trainer._prepare_inputs(sample)
-#         yield sample
-    
+# A simple warp for dataloader
 def _dataloader_builder(dataloader, batchsize=256, nsamples=2048):
-    # default_loader = dataloader
-    # template = dict(default_loader.__dict__)
-
-    # # drop attributes that will be auto-initialized
-    # to_drop = [k for k in template if k.startswith("_") or k == "batch_sampler"]
-    # for item in to_drop:
-    #     template.pop(item)
-
-    # # shuffle dataset and select nsamples from it
-    # # shuffled_dataset = template['dataset'].shuffle(seed=42)
-    # # nsamples = len(shuffled_dataset) if nsamples == -1 else nsamples
-    # # shuffled_dataset = shuffled_dataset.select(range(nsamples))
-    # template["pipeline"][0].dataset.pipeline[-1] = wds.batched(batchsize, partial=False)
-    # dataset_new = wds.DataPipeline(template["pipeline"][0].dataset.pipeline)
-    # kwargs = {
-    #     'batch_size': None,
-    #     'dataset': dataset_new,
-    # }
-    # template.update(kwargs)
-    # data_loader = type(default_loader)(**kwargs)
-
-    # data_loader.num_batches = math.ceil(nsamples / batchsize)
-    # data_loader.num_samples = nsamples
-
     for i, sample in  enumerate(dataloader):
-        # sample = dataloader._prepare_inputs(sample)
         if (i + 1) * (batchsize) <= nsamples:
             yield sample
         else:
@@ -978,86 +910,34 @@ def _run_llama(model, batch, loss=False, retmoved=False):
     # return torch.cat([out[key] for key in ['start_logits', 'end_logits']])
 
 @torch.no_grad()
-def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str, run_name: str):
-    db_file = f'database_{run_name}.db'
-    # module.to("cuda:2")
-    module.to(torch.bfloat16)
-    # gen_transformerdb(
-    #     db_file,
-    #     _get_model(module),
-    #     _run_llama,
-    #     _dataloader_builder(
-    #         dataloader,
-    #         batchsize=loader_batchsize,
-    #         nsamples=loader_nsamples,
-    #     ),
-    #     headcount=module.config.num_attention_heads,
-    #     headsize=module.config.hidden_size // module.config.num_attention_heads,
-    #     fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
-    #     attname='self_attn.o_proj',
-    #     fcname='mlp.down_proj',
-    #     run_name=run_name)
+def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str, run_name: str,):
+
+    # db_file = f'database_{run_name}.db'
+    module.to("cuda:2")
+    # module.to(torch.bfloat16)
+    gen_transformerdb(
+        db_file,
+        _get_model(module),
+        _run_llama,
+        _dataloader_builder(
+            dataloader,
+            batchsize=loader_batchsize,
+            nsamples=loader_nsamples,
+        ),
+        headcount=module.config.num_attention_heads,
+        headsize=module.config.hidden_size // module.config.num_attention_heads,
+        fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
+        attname='self_attn.o_proj',
+        fcname='mlp.down_proj',
+        run_name=run_name)
     
-    # return
-    # model = _get_model(module)()
-    # db = StructDatabase(db_file, model)
-    # error_file = f'errors_squared_{run_name}.txt'
-    # compute_squared(
-    #     db,
-    #     _get_model(module),
-    #     _dataloader_builder(
-    #         dataloader,
-    #         batchsize=loader_batchsize,
-    #         nsamples=1024, # Please adjust this number for efficiency
-    #     ),
-    #     _run_llama,
-    #     error_file
-    # )
-    # torch.cuda.empty_cache()
-
-    # errors = db.load_errors(error_file)
-    # baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
-    # struct_spdy = StructuredSPDY(
-    #     target, db, errors, baselinetime, prunabletime, timings,
-    #     module, _run_llama,
-    #     _dataloader_builder(
-    #         dataloader,
-    #         batchsize=1,
-    #         nsamples=20,
-    #     ),
-    # )
-
-    # profile = f'profile_{target}_32_20kcali_size_llama2.txt'
-    # struct_spdy.search(profile)
-    # db.load_file(module, profile)
-    
-
-    weight_path_ori = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/llama_3_1_8b_evo_search_attn_prune_each_head_from_1.5x"
-    weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/llama_3_1_8b_evo_search_attn_prune_each_head_from_1.5x"
+    # Llama 3.1 database path
+    weight_path_ori = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/prune_with_fine_edu_20kcali_2x"
+    weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/prune_with_fine_edu_20kcali_2x"
+    # Llama 2 database path
     # weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/gradual_prune_from_1.5x"
     # weight_path = "/nfs/scistore19/alistgrp/stang/llm-foundry/scripts/database/2.5x_gradual_from_2_reg"
-    # db_ = db.db
-    # for name in db_:
-    #     layer_dir = os.path.join(weight_path, name)
-    #     if not os.path.exists(layer_dir):
-    #         os.mkdir(layer_dir)
-    #     for sparsity in list(db_[name].keys()):
-    #         # sparsity_dir = os.path.join(layer_dir, sparsity)
-    #         # if not os.path.exists(sparsity_dir):
-    #         #     os.mkdir(sparsity_dir)
-    #         torch.save(db_[name][sparsity], f"{layer_dir}/{sparsity}.pt")
-    #     # sparsity_dir = os.path.join(layer_dir, "1.0000")
-    #     # if not os.path.exists(sparsity_dir):
-    #     #     os.mkdir(sparsity_dir)
-    #     torch.save(torch.zeros_like(db_[name][sparsity]).cpu(), f"{layer_dir}/1.0000.pt")
-    # return
 
-
-    # errors = db.load_errors(error_file)
-    # baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
-    
-    # errors = db.load_errors(error_file)
-    # baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
     module.to("cuda:1")
     layer_names = []
     layer_list = os.listdir(weight_path_ori)
@@ -1065,14 +945,6 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
         layer_names.append(f"model.model.layers.{i}.self_attn.o_proj")
         layer_names.append(f"model.model.layers.{i}.mlp.down_proj")
     module.state = [None] * len(layer_names)
-    # print(f"attn level2sparsity dict: {db.level2attn_sparsity}")
-    # print(f"mlp level2sparsity dict: {db.level2mlp_sparsity}")
-    # layer_names = []
-    # for name in db.db:
-    #     layer_names.append(name)
-    #     print(name)
-    
-    
     
     # # 1.5x acceleration
     # parent = [3 for _ in layer_names]
@@ -1096,13 +968,11 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
                                     batchsize=1,
                                     nsamples=64, # Please adjust this number for efficiency
                                         )
-    struct_evo_search = StructuredEvoSearch(model=module, db=None, weight_path=weight_path,
+    struct_evo_search = StructuredEvoSearch(model=module, weight_path=weight_path,
                                             calibration_dataloader=calib_loader, fitness_fn="ppl")
     struct_evo_search.get_berttimings(timings_file)
     
     # new_parent = []
-    # new_parent = [0, 0, 0, 0, 2, 2, 1, 2, 2, 2, 2, 2, 3, 2, 1, 2, 5, 4, 4, 4, 3, 4, 4, 4, 3, 4, 2, 2, 4, 4, 3, 2, 1, 2, 2, 2, 2, 2, 3, 2, 4, 4, 3, 4, 4, 4, 5, 4, 3, 4, 4, 4, 5, 4, 4, 4, 4, 5, 5, 4, 3, 5, 4, 2]
-    # for i, name in enumerate(layer_names):
     #     if os.path.exists(os.path.join(weight_path, name)):
     #         sparsity_list = os.listdir(os.path.join(weight_path, name))
     #         sparsities = []
@@ -1125,7 +995,7 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     # resdual = sum(parent) - sum(new_parent)
     # for _ in range(resdual):
     #     while True:
-    #         idx = random.randint(4, len(parent) - 5)
+    #         idx = random.randint(4, len(parent) - 1)
     #         if new_parent[idx] + 1 > 9:
     #             continue
     #         else:
@@ -1134,80 +1004,22 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
     
     # parent = new_parent
 
-
-    # print("New parent: ", new_parent)
-    # parent=[0, 3, 3, 6, 6, 3, 3, 0, 0, 5, 3, 1, 4, 3, 5, 3, 3, 5, 6, 8, 9, 3, 6, 8, 6, 6, 6, 6, 6, 6, 6, 6, 5, 8, 8, 8, 7, 6, 8, 6, 5, 10, 6, 7, 8, 4, 9, 7, 6, 10, 8, 9, 8, 5, 10, 8, 4, 10, 10, 8, 8, 6, 10, 8] 
-    # manual= [0, 6, 2, 0, 4, 3, 6, 3, 2, 3, 5, 3, 3, 4, 6, 6, 6, 3, 3, 3, 4, 3, 1, 5, 6, 6, 1, 6, 7, 7, 8, 3, 3, 6, 4, 3, 5, 3, 6, 6, 3, 6, 4, 3, 5, 7, 6, 6, 6, 7, 6, 5, 4, 7, 6, 7, 6, 8, 9, 6, 6, 6, 5, 6]
-    # manual = [3, 3, 0, 0, 5, 6, 4, 3, 4, 4, 5, 4, 4, 3, 3, 5, 3, 5, 4, 4, 5, 4, 4, 3, 5, 6, 4, 6, 7, 6, 8, 6, 1, 3, 4, 3, 5, 4, 6, 6, 7, 7, 7, 7, 6, 7, 8, 7, 5, 5, 6, 5, 3, 7, 10, 7, 7, 6, 8, 6, 5, 6, 4, 6]
-    # manual = [0, 6, 1, 0, 4, 3, 4, 3, 4, 4, 5, 5, 6, 6, 5, 5, 3, 3, 3, 3, 4, 4, 4, 4, 5, 6, 5, 6, 7, 6, 7, 6, 4, 3, 4, 4, 5, 5, 5, 6, 5, 6, 6, 6, 5, 6, 8, 6, 5, 6, 6, 5, 5, 6, 8, 7, 6, 6, 6, 6, 6, 6, 6, 6]
-    # manual = [5, 1, 2, 0, 5, 4, 3, 4, 5, 4, 5, 2, 3, 2, 3, 5, 6, 6, 6, 6, 5, 6, 5, 6, 5, 6, 4, 6, 5, 5, 5, 6, 4, 4, 5, 4, 4, 5, 4, 6, 8, 5, 7, 5, 8, 5, 8, 6, 5, 6, 5, 6, 6, 6, 6, 7, 6, 5, 6, 6, 5, 5, 7, 4]
-    # manual = parent
-    # print(manual)
-    # manual = [0, 0, 0, 0, 2, 2, 1, 2, 2, 2, 2, 2, 3, 2, 1, 2, 5, 4, 4, 4, 3, 4, 4, 4, 3, 4, 2, 2, 4, 4, 3, 2, 1, 2, 2, 2, 2, 2, 3, 2, 4, 4, 3, 4, 4, 4, 5, 4, 3, 4, 4, 4, 5, 4, 4, 4, 4, 5, 5, 4, 3, 5, 4, 2]
-    # manual = [0, 2, 0, 2, 3, 4, 2, 4, 4, 4, 5, 4, 3, 2, 3, 5, 6, 7, 5, 7, 5, 7, 5, 7, 5, 6, 5, 6, 7, 6, 5, 5, 3, 4, 5, 4, 5, 4, 4, 4, 7, 5, 5, 5, 7, 5, 6, 6, 5, 7, 5, 7, 7, 7, 5, 8, 6, 6, 7, 5, 7, 5, 8, 5]
-    # manual[0] = 0
-    # manual[1] = 0
-    # manual[2] = 0
-    # manual[3] = 0
-
-    # manual[-1] = 0
-    # manual[-2] = 0
-    # manual[-3] = 0
-    # manual[-4] = 0
-
-    # manual[20] += 1 
-    # manual[21] += 1
-    # manual[22] += 1
-    # manual[23] += 1
-
-    # struct_evo_search.load_weight(module, layer_names, manual, weight_path)
-    # print(struct_evo_search.compute_fitness(module, struct_evo_search.data[:40], "ppl", None))
-    # return
-    # print(struct_evo_search.compute_fitness(module, struct_evo_search.data[:64], "ppl", struct_evo_search.target_logits[:64]))
-    # return
-    # target_logits = []
-
-
-
     group_num = 0
-    generation_number = 300
+    generation_number = 200
     within_group = False
     group_index = 0
     offspring_num = 16
     for generation in range(generation_number):
-        # if generation < 20:
-        #     group_num = 4
-        # elif generation < 100:
-        #     group_num = 8
-        # elif generation < 300:
-        offspring_num = 16
-        group_num = 8 
-        within_group = True
-        group_index = (generation - 0) % group_num
-        # elif generation < 200:
-        #     offspring_num = 16
-        #     group_num = 4
-        #     within_group = True
-        #     group_index = (generation - 100) % group_num
-        # elif generation < 400:
-        #     offspring_num = 32
-        #     group_num = 4
-        #     within_group = True
-        #     group_index = (generation - 300) % group_num
+        if generation < 20:
+            group_num = 4
+        elif generation < 100:
+            group_num = 8
+        elif generation < 300:
+            offspring_num = 16
+            group_num = 8 
+            within_group = True
+            group_index = (generation - 100) % group_num
         
-        # elif generation < 150:
-        #     group_num = 1
-        #     offspring_num = 16
-        #     within_group = True
-        #     group_index=0
-        
-        # else:
-        # group_num = 16
-        # offspring_num = 8
-        # within_group = True
-        # group_index = 0
-        # group_index = (generation - 0) % group_num
-
         print(f"Generation {generation + 1}/{generation_number}")
         if within_group:
             group_size = int(len(parent) / group_num)
@@ -1217,16 +1029,6 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
             if all(i == 0 for i in group_level) or all(i == 10 for i in group_level):
                 continue
 
-            # for i in range(group_size):
-            #     if i % 2 == 0:
-            #         attn_group_level.append(group_level[i])
-            #     else:
-            #         mlp_group_level.append(group_level[i])
-
-            # if all(i == 0 for i in attn_group_level) or all(i == 10 for i in attn_group_level):
-            #     continue
-            # if all(i == 0 for i in mlp_group_level) or all(i == 10 for i in mlp_group_level):
-            #     continue
         print("Start to generate offspring.")
         offspring_list = struct_evo_search.generate_offspring(
             parent=parent, layer_names=layer_names, offspring_num=offspring_num, 
@@ -1242,13 +1044,69 @@ def oneshot_prune(dataloader, module: Module, target: float, loader_batchsize: i
         layer_names=layer_names)
         print(f"Selection of generation {generation + 1} is over.")
         print(f"Best fitness value of generation {generation + 1} is {train_fitness}")
-    profile = f'profile"_{target}_{run_name}.txt'
+    profile = f'profile_{target}_{run_name}.txt'
     with open(profile, "w") as f:
+        f.write("\n".join(f"{parent}"))
         f.write("\n".join([f"{layer_name}: {level}" for layer_name, level in zip(layer_names, parent)]))
-    print("The final child is: ")
-    print(parent)
+    print(f"The final child is: {parent}, the details are stored in file: {profile}")
     struct_evo_search.load_weight(module, layer_names, parent, weight_path)
     return
+
+@torch.no_grad()
+def oneshot_prune_ziplm(dataloader, module: Module, target: float, loader_batchsize: int, loader_nsamples: int, timings_file: str, run_name: str,):
+
+    db_file = f'database_{run_name}.db'
+    module.to("cuda:2")
+    # module.to(torch.bfloat16)
+    gen_transformerdb(
+        db_file,
+        _get_model(module),
+        _run_llama,
+        _dataloader_builder(
+            dataloader,
+            batchsize=loader_batchsize,
+            nsamples=loader_nsamples,
+        ),
+        headcount=module.config.num_attention_heads,
+        headsize=module.config.hidden_size // module.config.num_attention_heads,
+        fcdim=module.config.intermediate_size if hasattr(module.config, 'intermediate_size') else module.config.hidden_size * 4,
+        attname='self_attn.o_proj',
+        fcname='mlp.down_proj',
+        run_name=run_name,
+        save_as_db=True)
+    
+    model = _get_model(module)()
+    db = StructDatabase(db_file, model)
+    error_file = f'errors_squared_{run_name}.txt'
+    compute_squared(
+        db,
+        _get_model(module),
+        _dataloader_builder(
+            dataloader,
+            batchsize=loader_batchsize,
+            nsamples=32, # Please adjust this number for efficiency
+        ),
+        _run_llama,
+        error_file
+    )
+    torch.cuda.empty_cache()
+
+    errors = db.load_errors(error_file)
+    baselinetime, prunabletime, timings = db.get_berttimings(timings_file)
+    struct_spdy = StructuredSPDY(
+        target, db, errors, baselinetime, prunabletime, timings,
+        module, _run_llama,
+        _dataloader_builder(
+            dataloader,
+            batchsize=1,
+            nsamples=20, #Please adjust this number for efficiency
+        ),
+    )
+
+    profile = f'profile_{target}_ziplm_llama3.1.txt'
+    struct_spdy.search(profile)
+    db.load_file(module, profile)
+    return 
 
 @torch.no_grad()
 def load_pruned_model(module, db_file, profile):

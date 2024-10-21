@@ -1,7 +1,7 @@
 calibration_data_size=2048
-target=2.5
+target=2
 is_prune=true
-run_name=evo_search_2.5x_idx+sparsity_reg_final_test_ppl
+run_name=evo_search_2.0_llama2_ablation_without_front_layer
 global_train_batch_size=1
 
 # In some cases, bf16 may cause Non-Full rank during inverting the hessian matrix   

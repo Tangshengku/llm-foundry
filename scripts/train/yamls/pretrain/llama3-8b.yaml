@@ -7,7 +7,8 @@ variables:
 max_seq_len: 8192
 # Run Name
 run_name:  # If left blank, will be read from env var $RUN_NAME
-timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/Llama3.1-8b-A6000_flash_kv_ignore.txt
+# timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/Llama3.1-8b-A6000_flash_kv_ignore.txt
+timing_file: /nfs/scistore19/alistgrp/stang/llm-foundry/timing_file/Llama3.1-8b-A6000_flash_kv_ignore_level.txt
 
 max_split_size_mb: 512
 # Model
@@ -34,9 +35,12 @@ train_loader:
   dataset:
     # local: ${data_local}
     streams:
-      finewebedu100bt:
-          local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finedwebedu_100B_llama3.1
-          split: train
+      slimpajama:
+        local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/slimpajama_llama3.1
+        split: train
+      # finewebedu100bt:
+      #     local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finedwebedu_100B_llama3.1
+      #     split: train
       # finewebedu10bt:
       #     local: /nfs/scistore19/alistgrp/stang/llm-foundry/tmp_data/finewebedu/sample-10BT
       #     split: train
@@ -83,17 +87,17 @@ algorithms:
     clipping_type: norm
     clipping_threshold: 1.0
 
-max_duration: 600ba  # ~ 2.5B tokens
+max_duration: 1200ba  # ~ 2.5B tokens
 eval_interval: 500ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 2304
+global_train_batch_size: 1024
 
 # System
 seed: ${variables.global_seed}
 device_eval_batch_size: 16
 # device_train_microbatch_size: 64
-device_train_microbatch_size: 2
+device_train_microbatch_size: 1
 precision: amp_bf16
 
 # FSDP
@@ -117,11 +121,11 @@ callbacks:
   memory_monitor: {}
   runtime_estimator: {}
 
-# loggers:
-#   wandb: {}
+loggers:
+  wandb: {project: Evo_structure_prune, log_artifacts: ture}
 
 # Checkpoint to local filesystem or remote object store
-save_interval: 60ba
+save_interval: 120ba
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
 # save_folder: ./{run_name}/checkpoints
 # save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints
